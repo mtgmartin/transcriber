@@ -58,9 +58,9 @@ void TranscriberProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce:
     if (isNonRealtime())
         info.flags |= Log::nonRealtime;
 
-    if (auto* playHead = getPlayHead())
+    if (auto* hostPlayHead = getPlayHead())
     {
-        if (const auto pos = playHead->getPosition())
+        if (const auto pos = hostPlayHead->getPosition())
         {
             info.flags |= Log::hasPosition;
 

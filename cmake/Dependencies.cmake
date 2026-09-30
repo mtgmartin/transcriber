@@ -5,16 +5,17 @@ set(TRANSCRIBER_DEPS_DIR "${CMAKE_BINARY_DIR}/deps")
 
 # --- WebView2 SDK (static loader), found by JUCE's FindWebView2.cmake --------------
 set(WEBVIEW2_VERSION 1.0.3485.44)   # the version JUCE 9.0.3's FindWebView2 suggests
-set(WEBVIEW2_ROOT "${TRANSCRIBER_DEPS_DIR}/nuget/Microsoft.Web.WebView2.${WEBVIEW2_VERSION}")
+# Not named WEBVIEW2_ROOT: CMake treats <Package>_ROOT variables as find_package hints.
+set(TRANSCRIBER_WEBVIEW2_DIR "${TRANSCRIBER_DEPS_DIR}/nuget/Microsoft.Web.WebView2.${WEBVIEW2_VERSION}")
 
-if(NOT EXISTS "${WEBVIEW2_ROOT}/build/native/include/WebView2.h")
+if(NOT EXISTS "${TRANSCRIBER_WEBVIEW2_DIR}/build/native/include/WebView2.h")
     set(nupkg "${TRANSCRIBER_DEPS_DIR}/webview2.${WEBVIEW2_VERSION}.nupkg")
     file(DOWNLOAD
         "https://api.nuget.org/v3-flatcontainer/microsoft.web.webview2/${WEBVIEW2_VERSION}/microsoft.web.webview2.${WEBVIEW2_VERSION}.nupkg"
         "${nupkg}"
         EXPECTED_HASH SHA256=BC09150B179246AC90189649B13BE8E6B11B3AC200E817E18DF106E1F3CF489E
         TLS_VERIFY ON)
-    file(ARCHIVE_EXTRACT INPUT "${nupkg}" DESTINATION "${WEBVIEW2_ROOT}")
+    file(ARCHIVE_EXTRACT INPUT "${nupkg}" DESTINATION "${TRANSCRIBER_WEBVIEW2_DIR}")
 endif()
 
 set(JUCE_WEBVIEW2_PACKAGE_LOCATION "${TRANSCRIBER_DEPS_DIR}/nuget")
