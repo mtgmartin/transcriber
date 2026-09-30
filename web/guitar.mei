@@ -1,0 +1,72 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mei xmlns="http://www.music-encoding.org/ns/mei" meiversion="5.1">
+  <meiHead>
+    <fileDesc>
+      <titleStmt>
+        <title>Guitar Test</title>
+      </titleStmt>
+      <pubStmt/>
+    </fileDesc>
+  </meiHead>
+  <music>
+    <body>
+      <mdiv>
+        <score>
+          <scoreDef meter.count="4" meter.unit="4">
+            <staffGrp symbol="bracket" bar.thru="true">
+              <staffDef n="1" lines="5">
+                <clef shape="G" line="2" dis="8" dis.place="below"/>
+              </staffDef>
+              <staffDef n="2" lines="6" notationtype="tab.guitar">
+                <clef shape="TAB"/>
+                <tuning tuning.standard="guitar.standard"/>
+              </staffDef>
+            </staffGrp>
+          </scoreDef>
+          <section>
+            <measure n="1" right="end">
+              <staff n="1">
+                <layer n="1">
+                  <chord dur="4">
+                    <note pname="e" oct="3"/>
+                    <note pname="b" oct="3"/>
+                    <note pname="e" oct="4"/>
+                  </chord>
+                  <beam>
+                    <note dur="8" pname="g" oct="3"/>
+                    <note dur="8" pname="b" oct="3"/>
+                  </beam>
+                  <note dur="2" pname="e" oct="4"/>
+                </layer>
+              </staff>
+              <staff n="2">
+                <layer n="1">
+                  <tabGrp dur="4">
+                    <tabDurSym/>
+                    <note tab.course="5" tab.fret="7"/>
+                    <note tab.course="3" tab.fret="4"/>
+                    <note tab.course="1" tab.fret="0"/>
+                  </tabGrp>
+                  <beam>
+                    <tabGrp dur="8">
+                      <tabDurSym/>
+                      <note tab.course="3" tab.fret="0"/>
+                    </tabGrp>
+                    <tabGrp dur="8">
+                      <tabDurSym/>
+                      <note tab.course="2" tab.fret="0"/>
+                    </tabGrp>
+                  </beam>
+                  <tabGrp dur="2">
+                    <tabDurSym/>
+                    <note tab.course="1" tab.fret="0"/>
+                  </tabGrp>
+                </layer>
+              </staff>
+            </measure>
+          </section>
+        </score>
+      </mdiv>
+    </body>
+  </music>
+</mei>

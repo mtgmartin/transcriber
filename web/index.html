@@ -1,0 +1,72 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Transcriber · Phase 1 tests</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header>
+  <h1>Transcriber <span class="dim">Phase 1 diagnostic build</span></h1>
+  <div class="dim" id="instance">Instance —</div>
+</header>
+
+<main>
+  <section class="panel" id="status-panel">
+    <h2>Host status <span class="dim">(tests 1.1–1.2, 1.8)</span></h2>
+    <dl id="status"></dl>
+    <div class="row">
+      <button id="clear-capture" type="button">Clear captured notes</button>
+      <button id="open-log" type="button">Show log file</button>
+    </div>
+  </section>
+
+  <section class="panel">
+    <h2>Timing vs. exported clip <span class="dim">(test 1.3)</span></h2>
+    <p>Clear the captured notes, play the clip once, stop, then choose the <code>.mid</code> file you exported from the same clip.</p>
+    <div class="row"><button id="compare" type="button">Compare with MIDI file…</button></div>
+    <pre id="compare-result" class="result">No comparison yet.</pre>
+  </section>
+
+  <section class="panel">
+    <h2>Saved state <span class="dim">(test 1.7)</span></h2>
+    <div class="row">
+      <button id="state-5" type="button">Use 5 MB test state</button>
+      <button id="state-0" type="button">Use empty state</button>
+    </div>
+    <p id="state-status" class="result">—</p>
+  </section>
+
+  <section class="panel">
+    <h2>Keyboard <span class="dim">(test 1.4)</span></h2>
+    <p>Click inside this box, then press: letters, digits, space, arrows, Delete, Backspace, Enter, Esc, Tab, F1–F12, Ctrl+Z, Ctrl+C, Ctrl+V.</p>
+    <div id="key-target" tabindex="0">Click here, then type</div>
+    <ol id="key-log" class="result"></ol>
+  </section>
+
+  <section class="panel wide">
+    <h2>Notation rendering <span class="dim">(tests 1.5–1.6)</span></h2>
+    <div class="row">
+      <label for="sample">Test score</label>
+      <select id="sample">
+        <option value="piano.mei">Piano – grand staff</option>
+        <option value="drums.mei">Drum kit – two voices</option>
+        <option value="guitar.mei">Guitar – standard + tab</option>
+      </select>
+      <button id="export-pdf" type="button">Export all three as PDF…</button>
+    </div>
+    <p id="render-status" class="result">Loading Verovio…</p>
+    <div id="score"></div>
+  </section>
+</main>
+
+<script src="verovio-toolkit-wasm.js"></script>
+<!-- Attach the ready handler immediately: the runtime can finish initialising
+     before later scripts run, and then onRuntimeInitialized would never fire. -->
+<script>window.verovioReady = new Promise(function (resolve) { verovio.module.onRuntimeInitialized = resolve; });</script>
+<script src="jspdf.umd.min.js"></script>
+<script src="svg2pdf.umd.min.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
