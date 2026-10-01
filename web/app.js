@@ -151,6 +151,14 @@ window.addEventListener("resize", function () {
   displayTimer = setTimeout(logDisplay, 300);
 });
 
+// Moving the window to a monitor with different scaling changes devicePixelRatio
+// without a resize event, so watch the ratio itself.
+function watchPixelRatio() {
+  matchMedia("(resolution: " + window.devicePixelRatio + "dppx)")
+    .addEventListener("change", function () { logDisplay(); watchPixelRatio(); }, { once: true });
+}
+watchPixelRatio();
+
 // ---- Notation (tests 1.5, 1.6) ---------------------------------------------------
 const samples = ["piano.mei", "drums.mei", "guitar.mei"];
 const screenOptions = { pageWidth: 2100, pageHeight: 2970, scale: 40, adjustPageHeight: true,
@@ -255,7 +263,13 @@ on("pdfSaved", function (r) {
 $("sample").addEventListener("change", function (e) { showSample(e.target.value); });
 $("export-pdf").addEventListener("click", exportPdf);
 
-window.verovioReady.then(function () {
+// A start-up that never finishes should show up as an error, not as "Loading…" forever.
+const verovioTimeout = new Promise(function (resolve, reject) {
+  setTimeout(function () { reject(new Error("Verovio did not start within 30 s")); }, 30000);
+});
+
+Promise.race([window.verovioReady || Promise.reject(new Error("verovioReady is missing from the Verovio script")),
+              verovioTimeout]).then(function () {
   toolkit = new verovio.toolkit();
   log("verovioReady", { version: toolkit.getVersion() });
   logDisplay();

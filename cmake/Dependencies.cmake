@@ -21,11 +21,11 @@ endif()
 set(JUCE_WEBVIEW2_PACKAGE_LOCATION "${TRANSCRIBER_DEPS_DIR}/nuget")
 
 # --- Web UI libraries from npm ------------------------------------------------------
-# transcriber_fetch_npm(<name> <version> <sha512 hex> <file inside the package>)
-# Appends the extracted file to TRANSCRIBER_WEB_LIBRARIES.
+# transcriber_fetch_npm(<name> <version> <sha512 hex> <file inside the package> <out var>)
+# Sets <out var> to the path of the extracted file.
 set(TRANSCRIBER_WEB_LIBRARIES "")
 
-function(transcriber_fetch_npm name version sha512 path_in_package)
+function(transcriber_fetch_npm name version sha512 path_in_package out_var)
     get_filename_component(file_name "${path_in_package}" NAME)
     set(dest_dir "${TRANSCRIBER_DEPS_DIR}/npm/${name}-${version}")
     set(extracted "${dest_dir}/package/${path_in_package}")
@@ -44,17 +44,33 @@ function(transcriber_fetch_npm name version sha512 path_in_package)
         message(FATAL_ERROR "${path_in_package} was not found in ${name}-${version}.tgz")
     endif()
 
-    set(TRANSCRIBER_WEB_LIBRARIES ${TRANSCRIBER_WEB_LIBRARIES} "${extracted}" PARENT_SCOPE)
+    set(${out_var} "${extracted}" PARENT_SCOPE)
 endfunction()
 
 transcriber_fetch_npm(verovio 6.3.0
     d69e9684fff0dd6ac084f5434cd5031fd5153c064e9c79d95535b172513c85a1dc71523fabc73ef7dbcb1faad180bf4cb9868547d1c5e14243e8cc96d827ccc2
-    dist/verovio-toolkit-wasm.js)
+    dist/verovio-toolkit-wasm.js
+    verovio_js)
 
 transcriber_fetch_npm(jspdf 4.2.1
     632017caf9e68d36d1e1b1d044bcdec770ae20d0839509c1aa8498ca32704cfdb1f630cbb8a0f3cbb68a525d21831dee85c97bc73837d9a827e6f9627ba1c895
-    dist/jspdf.umd.min.js)
+    dist/jspdf.umd.min.js
+    jspdf_js)
 
 transcriber_fetch_npm(svg2pdf.js 2.8.1
     0335df3c78c79c5b7d7697513e159604e2a2a673125906512a25771534cf758eb0c11813de569b6c0e2cd072106ac90d870021adc236bb6ac3843f23f2e75f35
-    dist/svg2pdf.umd.min.js)
+    dist/svg2pdf.umd.min.js
+    svg2pdf_js)
+
+# Verovio starts its WASM runtime asynchronously and only calls onRuntimeInitialized if a
+# handler is already attached; there is no "already started" flag. A handler attached by a
+# later <script> tag can therefore miss the call (seen in Live: 1 of 6 page loads). Code
+# appended to the same file runs before any async continuation, so the race cannot happen.
+set(verovio_patched "${TRANSCRIBER_DEPS_DIR}/web/verovio-toolkit-wasm.js")
+file(MAKE_DIRECTORY "${TRANSCRIBER_DEPS_DIR}/web")
+file(COPY_FILE "${verovio_js}" "${verovio_patched}")
+file(APPEND "${verovio_patched}"
+    "\n;/* Added by Transcriber's build (cmake/Dependencies.cmake) */\n"
+    "window.verovioReady = new Promise(function (resolve) { verovio.module.onRuntimeInitialized = resolve; });\n")
+
+set(TRANSCRIBER_WEB_LIBRARIES "${verovio_patched}" "${jspdf_js}" "${svg2pdf_js}")

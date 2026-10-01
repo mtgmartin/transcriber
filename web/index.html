@@ -61,10 +61,8 @@
   </section>
 </main>
 
+<!-- The build appends window.verovioReady to this file (see cmake/Dependencies.cmake). -->
 <script src="verovio-toolkit-wasm.js"></script>
-<!-- Attach the ready handler immediately: the runtime can finish initialising
-     before later scripts run, and then onRuntimeInitialized would never fire. -->
-<script>window.verovioReady = new Promise(function (resolve) { verovio.module.onRuntimeInitialized = resolve; });</script>
 <script src="jspdf.umd.min.js"></script>
 <script src="svg2pdf.umd.min.js"></script>
 <script src="app.js"></script>

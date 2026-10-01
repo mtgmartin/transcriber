@@ -4,3 +4,6 @@ out/
 .vs/
 .vscode/
 *.user
+
+# Local Ableton Live test project (personal, not published)
+test Project/
