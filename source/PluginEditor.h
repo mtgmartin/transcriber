@@ -4,8 +4,8 @@
 
 #include <juce_gui_extra/juce_gui_extra.h>
 
-// Phase 1: a WebView2 page (bundled in the plugin) that renders Verovio test scores,
-// exports a test PDF, records key presses, and shows the diagnostic status.
+// A WebView2 page (bundled in the plugin): the capture controls and note preview, plus the
+// Phase 1 test tools (Verovio test scores, PDF export, key presses, host status).
 class TranscriberEditor final : public juce::AudioProcessorEditor,
                                 private juce::Timer
 {
@@ -27,6 +27,8 @@ private:
 
     TranscriberProcessor& processor;
     std::unique_ptr<juce::FileChooser> chooser;
+    uint64_t lastPreviewRevision = ~(uint64_t) 0;
+    double lastPreviewMs = 0.0;
     const bool browserSupported;
     juce::WebBrowserComponent browser;
 

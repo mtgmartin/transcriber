@@ -1,9 +1,7 @@
 #pragma once
 
-#include "DiagnosticLog.h"
+#include <juce_audio_basics/juce_audio_basics.h>
 
-#include <array>
-#include <mutex>
 #include <vector>
 
 struct CapturedNote
@@ -13,25 +11,6 @@ struct CapturedNote
     int pitch = 0;
     int velocity = 0;
     int channel = 1;
-};
-
-// Notes built from the MIDI records, in quarter notes of song time.
-// Fed from the log writer thread; read from the message thread.
-class Capture
-{
-public:
-    Capture();
-
-    void add (const DiagnosticLog::Record&);
-    void clear();
-
-    std::vector<CapturedNote> snapshot() const;
-    int size() const;
-
-private:
-    mutable std::mutex mutex;
-    std::vector<CapturedNote> notes;
-    std::array<std::array<int, 128>, 16> openIndex {};   // index into notes, or -1
 };
 
 struct CompareResult

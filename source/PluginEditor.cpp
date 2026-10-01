@@ -70,10 +70,30 @@ juce::WebBrowserComponent::Options TranscriberEditor::makeBrowserOptions()
         {
             processor.getLog().logEvent ("ui", data);
         })
-        .withEventListener ("clearCapture", [this] (juce::var)
+        .withEventListener ("pageReady", [this] (juce::var)
+        {
+            lastPreviewRevision = ~(uint64_t) 0;   // the page is (re)loaded: send the picture again
+        })
+        .withEventListener ("capArm", [this] (juce::var)   { processor.getCapture().arm(); })
+        .withEventListener ("capStop", [this] (juce::var)  { processor.getCapture().stop(); })
+        .withEventListener ("capClear", [this] (juce::var)
         {
             processor.getCapture().clear();
             processor.getLog().logEvent ("captureCleared");
+        })
+        .withEventListener ("capMode", [this] (juce::var data)
+        {
+            processor.getCapture().setMode (data.getProperty ("mode", {}).toString() == "oneLoop" ? trs::ReadingMode::oneLoop
+                                                                                                 : trs::ReadingMode::asPlayed);
+        })
+        .withEventListener ("capLoopBars", [this] (juce::var data)
+        {
+            processor.getCapture().setLoopBars ((int) data.getProperty ("bars", 0));
+        })
+        .withEventListener ("capRedetect", [this] (juce::var) { processor.getCapture().redetect(); })
+        .withEventListener ("diagnostics", [this] (juce::var data)
+        {
+            processor.setDiagnosticsEnabled ((bool) data.getProperty ("enabled", false));
         })
         .withEventListener ("compareMidi", [this] (juce::var) { compareWithMidiFile(); })
         .withEventListener ("savePdf", [this] (juce::var data) { savePdf (data); })
@@ -158,8 +178,8 @@ void TranscriberEditor::timerCallback()
     if (b.flags & Log::hasBarCount)   o->setProperty ("bars", (juce::int64) b.barCount);
     if (b.flags & Log::hasLoop)       o->setProperty ("loop", juce::String (b.loopStart, 3) + " - " + juce::String (b.loopEnd, 3));
     o->setProperty ("sampleRate", processor.getSampleRateForDisplay());
-    o->setProperty ("capturedNotes", processor.getCapture().size());
-    o->setProperty ("logFile", processor.getLog().getFile().getFullPathName());
+    o->setProperty ("diagnostics", processor.getLog().isEnabled());
+    o->setProperty ("logFile", processor.getLog().isEnabled() ? processor.getLog().getFile().getFullPathName() : juce::String ("(diagnostic log is off)"));
     o->setProperty ("logLines", (juce::int64) processor.getLog().getLinesWritten());
     o->setProperty ("dropped", processor.getLog().getDroppedCount());
     o->setProperty ("stateTestMB", processor.getStateTestSize());
@@ -167,6 +187,18 @@ void TranscriberEditor::timerCallback()
     o->setProperty ("scale", juce::Component::getApproximateScaleFactorForComponent (this));
 
     browser.emitEventIfBrowserIsVisible ("status", juce::var (o));
+    browser.emitEventIfBrowserIsVisible ("capture", processor.getCapture().getStatus());
+
+    // The picture of the notes can be large, so send it only when it has changed, and not too often.
+    const auto revision = processor.getCapture().getRevision();
+    const auto now = juce::Time::getMillisecondCounterHiRes();
+
+    if (browser.isShowing() && revision != lastPreviewRevision && now - lastPreviewMs > 500.0)
+    {
+        lastPreviewRevision = revision;
+        lastPreviewMs = now;
+        browser.emitEventIfBrowserIsVisible ("preview", processor.getCapture().getPreview());
+    }
 }
 
 void TranscriberEditor::compareWithMidiFile()
@@ -183,7 +215,7 @@ void TranscriberEditor::compareWithMidiFile()
         if (file == juce::File())
             return;
 
-        const auto result = ::compareWithMidiFile (file, processor.getCapture().snapshot(), 0.01);
+        const auto result = ::compareWithMidiFile (file, processor.getCapture().getResolvedNotes(), 0.01);
         processor.getLog().logEvent ("compare", result.report);
         browser.emitEventIfBrowserIsVisible ("compareResult", result.report);
     });

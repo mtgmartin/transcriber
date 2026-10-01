@@ -1,7 +1,11 @@
 #include "PluginProcessor.h"
 #include "PluginEditor.h"
 
+#include <array>
 #include <cstring>
+
+// More MIDI events than this in one audio block are dropped (and counted).
+static constexpr size_t maxMidiEventsPerBlock = 1024;
 
 static juce::String makeInstanceId()
 {
@@ -11,7 +15,12 @@ static juce::String makeInstanceId()
 TranscriberProcessor::TranscriberProcessor()
     : AudioProcessor (BusesProperties().withOutput ("Output", juce::AudioChannelSet::stereo(), true)),
       instanceId (makeInstanceId()),
-      log (instanceId, [this] (const DiagnosticLog::Record& r) { capture.add (r); })
+      log (instanceId)
+{
+    logHostInfo();
+}
+
+void TranscriberProcessor::logHostInfo()
 {
     auto* info = new juce::DynamicObject();
     info->setProperty ("plugin", juce::String (JucePlugin_Name) + " " + JucePlugin_VersionString);
@@ -21,6 +30,20 @@ TranscriberProcessor::TranscriberProcessor()
     info->setProperty ("wrapper", juce::AudioProcessor::getWrapperTypeDescription (wrapperType));
     info->setProperty ("os", juce::SystemStats::getOperatingSystemName());
     log.logEvent ("start", juce::var (info));
+
+    auto* prepared = new juce::DynamicObject();
+    prepared->setProperty ("sampleRate", currentSampleRate.load());
+    prepared->setProperty ("maxBlock", maxBlockSize.load());
+    prepared->setProperty ("offline", nonRealtimePrepared.load());
+    log.logEvent ("prepare", juce::var (prepared));
+}
+
+void TranscriberProcessor::setDiagnosticsEnabled (bool shouldLog)
+{
+    log.setEnabled (shouldLog);
+
+    if (shouldLog)
+        logHostInfo();
 }
 
 TranscriberProcessor::~TranscriberProcessor()
@@ -31,6 +54,8 @@ TranscriberProcessor::~TranscriberProcessor()
 void TranscriberProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
 {
     currentSampleRate.store (sampleRate);
+    maxBlockSize.store (samplesPerBlock);
+    nonRealtimePrepared.store (isNonRealtime());
 
     auto* info = new juce::DynamicObject();
     info->setProperty ("sampleRate", sampleRate);
@@ -79,42 +104,88 @@ void TranscriberProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce:
         }
     }
 
-    const auto wallMs = juce::Time::getMillisecondCounterHiRes();
-    const auto isPlaying = (info.flags & Log::playing) != 0;
-
-    // Every block while playing; otherwise only when the transport state changes.
-    if (isPlaying || ! havePreviousInfo || ! info.sameTransportAs (previousInfo) || ! midi.isEmpty())
-    {
-        Log::Record r;
-        r.kind = Log::Record::Kind::block;
-        r.blockIndex = blockIndex;
-        r.wallMs = wallMs;
-        r.numSamples = buffer.getNumSamples();
-        r.info = info;
-        log.push (r);
-    }
-
     const auto sr = currentSampleRate.load();
+    const auto numSamples = buffer.getNumSamples();
 
-    for (const auto metadata : midi)
+    // The capture engine gets the position, the tempo and the note messages.
     {
-        Log::Record r;
-        r.kind = Log::Record::Kind::midi;
-        r.blockIndex = blockIndex;
-        r.wallMs = wallMs;
-        r.numSamples = buffer.getNumSamples();
-        r.info = info;
-        r.sampleOffset = metadata.samplePosition;
-        r.midiSize = juce::jmin (metadata.numBytes, 3);
-        std::memcpy (r.midi, metadata.data, (size_t) r.midiSize);
+        trs::HostBlock hostBlock;
+        hostBlock.playing     = (info.flags & Log::playing) != 0;
+        hostBlock.looping     = (info.flags & Log::looping) != 0;
+        hostBlock.nonRealtime = (info.flags & Log::nonRealtime) != 0;
+        hostBlock.hasPpq      = (info.flags & Log::hasPpq) != 0;
+        hostBlock.hasBpm      = (info.flags & Log::hasBpm) != 0;
+        hostBlock.hasTimeSig  = (info.flags & Log::hasTimeSig) != 0;
+        hostBlock.hasBarStart = (info.flags & Log::hasLastBarPpq) != 0;
+        hostBlock.ppq         = info.ppq;
+        hostBlock.bpm         = info.bpm;
+        hostBlock.barStartPpq = info.lastBarPpq;
+        hostBlock.tsNum       = info.tsNum;
+        hostBlock.tsDen       = info.tsDen;
+        hostBlock.numSamples  = numSamples;
+        hostBlock.sampleRate  = sr;
 
-        if ((info.flags & Log::hasPpq) && (info.flags & Log::hasBpm) && sr > 0.0)
+        std::array<trs::MidiEvent, maxMidiEventsPerBlock> events;
+        int numEvents = 0;
+        uint32_t tooMany = 0;
+
+        for (const auto metadata : midi)
         {
-            r.hasEventPpq = true;
-            r.eventPpq = info.ppq + (metadata.samplePosition / sr) * (info.bpm / 60.0);
+            if (numEvents >= (int) events.size())
+            {
+                ++tooMany;
+                continue;
+            }
+
+            auto& e = events[(size_t) numEvents++];
+            e.sampleOffset = metadata.samplePosition;
+            e.size = juce::jmin (metadata.numBytes, 3);
+            std::memcpy (e.data, metadata.data, (size_t) e.size);
         }
 
-        log.push (r);
+        if (tooMany > 0)
+            capture.getEngine().addDropped (tooMany);
+
+        capture.getEngine().process (hostBlock, events.data(), numEvents);
+    }
+
+    if (log.isEnabled())
+    {
+        const auto wallMs = juce::Time::getMillisecondCounterHiRes();
+        const auto isPlaying = (info.flags & Log::playing) != 0;
+
+        // Every block while playing; otherwise only when the transport state changes.
+        if (isPlaying || ! havePreviousInfo || ! info.sameTransportAs (previousInfo) || ! midi.isEmpty())
+        {
+            Log::Record r;
+            r.kind = Log::Record::Kind::block;
+            r.blockIndex = blockIndex;
+            r.wallMs = wallMs;
+            r.numSamples = numSamples;
+            r.info = info;
+            log.push (r);
+        }
+
+        for (const auto metadata : midi)
+        {
+            Log::Record r;
+            r.kind = Log::Record::Kind::midi;
+            r.blockIndex = blockIndex;
+            r.wallMs = wallMs;
+            r.numSamples = numSamples;
+            r.info = info;
+            r.sampleOffset = metadata.samplePosition;
+            r.midiSize = juce::jmin (metadata.numBytes, 3);
+            std::memcpy (r.midi, metadata.data, (size_t) r.midiSize);
+
+            if ((info.flags & Log::hasPpq) && (info.flags & Log::hasBpm) && sr > 0.0)
+            {
+                r.hasEventPpq = true;
+                r.eventPpq = info.ppq + (metadata.samplePosition / sr) * (info.bpm / 60.0);
+            }
+
+            log.push (r);
+        }
     }
 
     // Never pass MIDI through: the plugin declares no MIDI output.

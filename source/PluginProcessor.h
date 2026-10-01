@@ -2,13 +2,13 @@
 
 #include <juce_audio_processors/juce_audio_processors.h>
 
-#include "Capture.h"
+#include "CaptureService.h"
 #include "DiagnosticLog.h"
 
 #include <atomic>
 
-// Phase 1 diagnostic build: an instrument that outputs silence, logs everything
-// the host sends, and captures notes for the timing comparison.
+// An instrument that outputs silence and captures the MIDI it receives (see CaptureService).
+// The diagnostic log of everything the host sends is off unless switched on.
 class TranscriberProcessor final : public juce::AudioProcessor
 {
 public:
@@ -46,7 +46,10 @@ public:
     //==============================================================================
     const juce::String instanceId;
     DiagnosticLog& getLog() { return log; }
-    Capture& getCapture() { return capture; }
+    CaptureService& getCapture() { return capture; }
+
+    // Switches the diagnostic log on or off; switching it on writes the host and prepare info first.
+    void setDiagnosticsEnabled (bool);
 
     // Latest transport info, for the editor's status display.
     DiagnosticLog::BlockInfo getLatestBlockInfo() const;
@@ -60,10 +63,14 @@ public:
 private:
     static void fillTestData (juce::MemoryBlock&, size_t numBytes, juce::int64 seed);
 
-    Capture capture;
+    void logHostInfo();
+
+    CaptureService capture;
     DiagnosticLog log;
 
     std::atomic<double> currentSampleRate { 0.0 };
+    std::atomic<int> maxBlockSize { 0 };
+    std::atomic<bool> nonRealtimePrepared { false };
     uint64_t blockIndex = 0;                  // audio thread only
     DiagnosticLog::BlockInfo previousInfo;   // audio thread only
     bool havePreviousInfo = false;           // audio thread only

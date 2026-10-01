@@ -13,24 +13,32 @@ static juce::File makeLogFile (const juce::String& instanceId)
 {
     auto dir = juce::File::getSpecialLocation (juce::File::userApplicationDataDirectory)
                    .getChildFile ("Transcriber").getChildFile ("logs");
-    dir.createDirectory();
 
     const auto stamp = juce::Time::getCurrentTime().formatted ("%Y%m%d-%H%M%S");
     return dir.getChildFile ("phase1-" + stamp + "-" + instanceId + ".jsonl");
 }
 
-DiagnosticLog::DiagnosticLog (const juce::String& instanceId, MidiListener listener)
+DiagnosticLog::DiagnosticLog (const juce::String& instanceId)
     : juce::Thread ("Transcriber log writer"),
       file (makeLogFile (instanceId)),
-      midiListener (std::move (listener)),
       buffer (capacity)
 {
+    startThread();
+}
+
+void DiagnosticLog::openStream()
+{
+    if (stream != nullptr || streamFailed)
+        return;
+
+    file.getParentDirectory().createDirectory();
     stream = std::make_unique<juce::FileOutputStream> (file);
 
     if (stream->failedToOpen())
+    {
         stream.reset();
-
-    startThread();
+        streamFailed = true;
+    }
 }
 
 DiagnosticLog::~DiagnosticLog()
@@ -44,6 +52,9 @@ DiagnosticLog::~DiagnosticLog()
 
 void DiagnosticLog::push (const Record& r) noexcept
 {
+    if (! enabled.load (std::memory_order_relaxed))
+        return;
+
     auto scope = fifo.write (1);
 
     if (scope.blockSize1 > 0)
@@ -56,6 +67,9 @@ void DiagnosticLog::push (const Record& r) noexcept
 
 void DiagnosticLog::logEvent (const juce::String& type, const juce::var& data)
 {
+    if (! enabled.load())
+        return;
+
     auto* obj = new juce::DynamicObject();
     obj->setProperty ("t", "event");
     obj->setProperty ("wallMs", juce::Time::getMillisecondCounterHiRes());
@@ -100,9 +114,6 @@ void DiagnosticLog::drain()
             {
                 const auto& r = buffer[(size_t) i];
 
-                if (r.kind == Record::Kind::midi && midiListener)
-                    midiListener (r);
-
                 writeLine (toVar (r));
             }
         };
@@ -117,6 +128,8 @@ void DiagnosticLog::drain()
 
 void DiagnosticLog::writeLine (const juce::var& object)
 {
+    openStream();
+
     if (stream == nullptr)
         return;
 

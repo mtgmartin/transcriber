@@ -3,11 +3,11 @@
 #include <juce_core/juce_core.h>
 
 #include <atomic>
-#include <functional>
 #include <mutex>
 #include <vector>
 
-// Phase 1 diagnostics: records everything the host sends, as JSON Lines.
+// Diagnostics: records everything the host sends, as JSON Lines. Off by default; the file is only
+// created once logging is switched on.
 // The audio thread only copies fixed-size records into a lock-free FIFO;
 // a background thread formats them and writes the file.
 class DiagnosticLog final : private juce::Thread
@@ -59,10 +59,7 @@ public:
         double eventPpq = 0.0;
     };
 
-    // Called from the writer thread for every MIDI record, so a capture can be built.
-    using MidiListener = std::function<void (const Record&)>;
-
-    DiagnosticLog (const juce::String& instanceId, MidiListener);
+    explicit DiagnosticLog (const juce::String& instanceId);
     ~DiagnosticLog() override;
 
     // Audio thread: real-time safe (no allocation, no locks).
@@ -70,6 +67,9 @@ public:
 
     // Any non-audio thread.
     void logEvent (const juce::String& type, const juce::var& data = {});
+
+    void setEnabled (bool shouldLog) noexcept { enabled.store (shouldLog); }
+    bool isEnabled() const noexcept { return enabled.load(); }
 
     juce::File getFile() const { return file; }
     int getDroppedCount() const noexcept { return dropped.load(); }
@@ -79,16 +79,18 @@ private:
     void run() override;
     void drain();
     void writeLine (const juce::var& object);
+    void openStream();
 
     static juce::var toVar (const Record&);
 
     juce::File file;
-    std::unique_ptr<juce::FileOutputStream> stream;
-    MidiListener midiListener;
+    std::unique_ptr<juce::FileOutputStream> stream;   // writer thread only
+    bool streamFailed = false;
 
     static constexpr int capacity = 1 << 15;
     juce::AbstractFifo fifo { capacity };
     std::vector<Record> buffer;
+    std::atomic<bool> enabled { false };
     std::atomic<int> dropped { 0 };
     std::atomic<int64_t> linesWritten { 0 };
 

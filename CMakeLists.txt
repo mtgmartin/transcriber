@@ -32,14 +32,22 @@ juce_add_plugin(Transcriber
     NEEDS_WEBVIEW2 TRUE
     NEEDS_CURL FALSE)
 
+# The capture core has no JUCE dependency, so the unit tests below build it on its own.
+set(TRANSCRIBER_CORE_SOURCES
+    source/core/CaptureEngine.cpp
+    source/core/CaptureModel.cpp
+    source/core/Reading.cpp)
+
 target_compile_features(Transcriber PRIVATE cxx_std_17)
 
 target_sources(Transcriber
     PRIVATE
-        source/Capture.cpp
+        source/CaptureService.cpp
         source/DiagnosticLog.cpp
+        source/MidiCompare.cpp
         source/PluginEditor.cpp
-        source/PluginProcessor.cpp)
+        source/PluginProcessor.cpp
+        ${TRANSCRIBER_CORE_SOURCES})
 
 juce_add_binary_data(TranscriberWebData
     SOURCES
@@ -67,3 +75,21 @@ target_link_libraries(Transcriber
         juce::juce_recommended_config_flags
         juce::juce_recommended_lto_flags
         juce::juce_recommended_warning_flags)
+
+# --- Unit tests for the capture core (run by CI with ctest) --------------------------------
+enable_testing()
+
+add_executable(TranscriberCoreTests
+    tests/core/test_main.cpp
+    ${TRANSCRIBER_CORE_SOURCES})
+
+target_include_directories(TranscriberCoreTests PRIVATE source tests/core)
+target_compile_features(TranscriberCoreTests PRIVATE cxx_std_17)
+
+if(MSVC)
+    target_compile_options(TranscriberCoreTests PRIVATE /W4)
+else()
+    target_compile_options(TranscriberCoreTests PRIVATE -Wall -Wextra)
+endif()
+
+add_test(NAME CaptureCore COMMAND TranscriberCoreTests)

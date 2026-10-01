@@ -26,6 +26,154 @@ window.addEventListener("unhandledrejection", function (e) {
 
 const $ = function (id) { return document.getElementById(id); };
 
+// ---- Capture ------------------------------------------------------------------------
+let capStatus = null;
+let capPreview = null;
+
+const stateLabels = {
+  idle: "Idle",
+  armed: "Armed: waiting for Live to play",
+  recording: "Recording",
+  stopped: "Stopped"
+};
+
+function describeReading(s) {
+  if (s.state === "idle" && !s.rawNotes) return "Nothing recorded yet.";
+  if (s.state === "armed") return "Waiting for Live to play…";
+  if (s.state === "recording")
+    return s.rawNotes + " notes so far, " + s.bars + " bars. The reading is chosen when the recording stops.";
+
+  const sources = { host: "from the host's loop", detected: "detected from the notes", user: "set by you", none: "" };
+  const lines = [];
+
+  if (s.mode === "oneLoop") {
+    lines.push("One loop · " + s.loopBars + " bar" + (s.loopBars === 1 ? "" : "s") + " (" + sources[s.source] + ")");
+    lines.push(s.passes + " pass" + (s.passes === 1 ? "" : "es") + " recorded; each pass replaces the one before it. " +
+               "If you stopped partway, the end of the loop comes from the previous pass.");
+  } else {
+    lines.push("As played (" + sources[s.source] + ")");
+    lines.push("Everything is written out in order, exactly as it was played.");
+    if (s.candidateBars)
+      lines.push("Closest repeat: every " + s.candidateBars + " bars, but " + Math.round(s.candidateMismatch * 100) +
+                 "% of the bars differ, so it was not treated as a loop. Press One loop to use it anyway.");
+  }
+
+  return lines.join("\n");
+}
+
+on("capture", function (s) {
+  capStatus = s;
+
+  const pill = $("cap-state");
+  pill.textContent = stateLabels[s.state] || s.state;
+  pill.className = "pill " + s.state;
+
+  const rec = $("rec");
+  rec.className = "record" + (s.state === "recording" || s.state === "armed" ? " active" : "");
+  rec.textContent = s.state === "recording" ? "Stop recording" : s.state === "armed" ? "Cancel" : "Record";
+
+  const summary = [];
+  summary.push(s.rawNotes + " notes recorded");
+  if (s.state !== "idle" || s.rawNotes) summary.push("to beat " + s.endPpq.toFixed(2));
+  if (s.incomplete) summary.push("SOME DATA WAS LOST (" + s.dropped + " records dropped)");
+  $("cap-summary").textContent = summary.join(" · ");
+
+  const hasCapture = s.state === "stopped";
+  $("mode-loop").classList.toggle("active", s.mode === "oneLoop");
+  $("mode-played").classList.toggle("active", s.mode === "asPlayed");
+  $("mode-loop").disabled = $("mode-played").disabled = $("redetect").disabled = !hasCapture;
+
+  const bars = $("loop-bars");
+  bars.disabled = !hasCapture;
+  if (document.activeElement !== bars && s.loopBars) bars.value = s.loopBars;
+
+  const text = $("reading-text");
+  text.className = "result" + (s.incomplete ? " bad" : "");
+  text.textContent = describeReading(s);
+});
+
+on("preview", function (p) {
+  capPreview = p;
+  drawRoll();
+});
+
+$("rec").addEventListener("click", function () {
+  const state = capStatus ? capStatus.state : "idle";
+  send(state === "recording" || state === "armed" ? "capStop" : "capArm");
+});
+$("cap-clear").addEventListener("click", function () { send("capClear"); });
+$("mode-loop").addEventListener("click", function () { send("capMode", { mode: "oneLoop" }); });
+$("mode-played").addEventListener("click", function () { send("capMode", { mode: "asPlayed" }); });
+$("redetect").addEventListener("click", function () { send("capRedetect"); });
+$("loop-bars").addEventListener("change", function (e) {
+  const bars = parseInt(e.target.value, 10);
+  if (bars >= 1) send("capLoopBars", { bars: bars });
+});
+
+// A simple piano-roll picture of the score notes. Each pass of a loop gets its own colour.
+function drawRoll() {
+  const canvas = $("roll");
+  const ratio = window.devicePixelRatio || 1;
+  const width = canvas.clientWidth, height = canvas.clientHeight;
+  if (!width || !height) return;
+
+  if (canvas.width !== Math.round(width * ratio) || canvas.height !== Math.round(height * ratio)) {
+    canvas.width = Math.round(width * ratio);
+    canvas.height = Math.round(height * ratio);
+  }
+
+  const g = canvas.getContext("2d");
+  g.setTransform(ratio, 0, 0, ratio, 0, 0);
+  g.clearRect(0, 0, width, height);
+
+  const note = $("roll-note");
+  if (!capPreview || !capPreview.notes.length) {
+    g.fillStyle = "#9aa3b5";
+    g.font = "13px Segoe UI, sans-serif";
+    g.fillText("The recorded notes appear here.", 12, 24);
+    note.textContent = "";
+    return;
+  }
+
+  const notes = capPreview.notes, bars = capPreview.bars;
+  let lowest = 127, highest = 0, end = capPreview.length;
+  for (let i = 0; i < notes.length; i += 5) {
+    lowest = Math.min(lowest, notes[i + 2]);
+    highest = Math.max(highest, notes[i + 2]);
+    end = Math.max(end, notes[i + 1]);
+  }
+  lowest = Math.max(0, lowest - 2);
+  highest = Math.min(127, highest + 2);
+
+  const left = 8, top = 16, plotW = width - left - 8, plotH = height - top - 8;
+  const x = function (ppq) { return left + ppq / end * plotW; };
+  const rowH = plotH / (highest - lowest + 1);
+
+  // bar lines
+  g.font = "11px Segoe UI, sans-serif";
+  g.textBaseline = "top";
+  for (let i = 0; i < bars.length; i += 3) {
+    const bx = x(bars[i]);
+    g.strokeStyle = "#2e3542";
+    g.beginPath(); g.moveTo(bx, top); g.lineTo(bx, top + plotH); g.stroke();
+    g.fillStyle = "#6b7488";
+    g.fillText(String(i / 3 + 1), bx + 3, 2);
+  }
+
+  for (let i = 0; i < notes.length; i += 5) {
+    const nx = x(notes[i]);
+    const nw = Math.max(2, x(notes[i + 1]) - nx - 1);
+    const ny = top + (highest - notes[i + 2]) * rowH;
+    g.fillStyle = "hsl(" + ((notes[i + 4] * 47 + 210) % 360) + ", 65%, 62%)";
+    g.fillRect(nx, ny, nw, Math.max(2, rowH - 1));
+  }
+
+  note.textContent = (notes.length / 5) + " notes" + (capPreview.truncated ? " (only the first part is drawn)" : "") +
+    " · " + end.toFixed(2) + " quarter notes";
+}
+
+window.addEventListener("resize", drawRoll);
+
 // ---- Host status (tests 1.1, 1.2, 1.8) ------------------------------------------
 const statusFields = [
   ["host", "Host"],
@@ -40,7 +188,7 @@ const statusFields = [
   ["ts", "Time signature"],
   ["loop", "Loop points"],
   ["sampleRate", "Sample rate"],
-  ["capturedNotes", "Captured notes"],
+  ["diagnostics", "Diagnostic log"],
   ["logLines", "Log lines written"],
   ["dropped", "Dropped log records"],
   ["scale", "Window scale"],
@@ -56,6 +204,7 @@ function formatValue(key, value) {
 }
 
 on("status", function (s) {
+  $("diagnostics").checked = !!s.diagnostics;
   $("instance").textContent = "Instance " + s.instance;
 
   const dl = $("status");
@@ -73,7 +222,7 @@ on("status", function (s) {
     "Test data in state: " + s.stateTestMB + " MB\nLast restore: " + s.stateCheck;
 });
 
-$("clear-capture").addEventListener("click", function () { send("clearCapture"); });
+$("diagnostics").addEventListener("change", function (e) { send("diagnostics", { enabled: e.target.checked }); });
 $("open-log").addEventListener("click", function () { send("openLogFolder"); });
 
 // ---- Timing comparison (test 1.3) -----------------------------------------------
@@ -281,3 +430,4 @@ Promise.race([window.verovioReady || Promise.reject(new Error("verovioReady is m
 });
 
 log("pageLoaded", { juceBridge: !!backend });
+send("pageReady");

@@ -1,66 +1,9 @@
-#include "Capture.h"
+#include "MidiCompare.h"
 
 #include <juce_audio_basics/juce_audio_basics.h>
 
 #include <algorithm>
 #include <cmath>
-
-Capture::Capture()
-{
-    for (auto& channel : openIndex)
-        channel.fill (-1);
-}
-
-void Capture::add (const DiagnosticLog::Record& r)
-{
-    if (r.kind != DiagnosticLog::Record::Kind::midi || ! r.hasEventPpq || r.midiSize < 3)
-        return;
-
-    const auto msg = juce::MidiMessage (r.midi, r.midiSize);
-
-    if (! msg.isNoteOnOrOff())
-        return;
-
-    const auto ch = juce::jlimit (1, 16, msg.getChannel()) - 1;
-    const auto pitch = msg.getNoteNumber();
-
-    const std::lock_guard<std::mutex> lock (mutex);
-    auto& open = openIndex[(size_t) ch][(size_t) pitch];
-
-    // A note-on for a note that is already held ends the held one (retrigger).
-    if (open >= 0)
-    {
-        notes[(size_t) open].offPpq = r.eventPpq;
-        open = -1;
-    }
-
-    if (msg.isNoteOn())
-    {
-        notes.push_back ({ r.eventPpq, -1.0, pitch, (int) msg.getVelocity(), ch + 1 });
-        open = (int) notes.size() - 1;
-    }
-}
-
-void Capture::clear()
-{
-    const std::lock_guard<std::mutex> lock (mutex);
-    notes.clear();
-
-    for (auto& channel : openIndex)
-        channel.fill (-1);
-}
-
-std::vector<CapturedNote> Capture::snapshot() const
-{
-    const std::lock_guard<std::mutex> lock (mutex);
-    return notes;
-}
-
-int Capture::size() const
-{
-    const std::lock_guard<std::mutex> lock (mutex);
-    return (int) notes.size();
-}
 
 namespace
 {
