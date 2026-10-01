@@ -698,6 +698,81 @@ namespace
         CHECK_NEAR (rig.model.raw().notes[0].offPpq - rig.model.raw().notes[0].onPpq, 100.0 / 48000.0 * 2.0, 1.0e-9);
     }
 
+    void testChordsAtAnAwkwardTempo()
+    {
+        // 127 bpm puts the notes at a different sample offset on every pass, so chord notes that
+        // are simultaneous in the clip arrive in a different order of tiny differences.
+        std::vector<sim::Note> clip;
+
+        for (int bar = 0; bar < 2; ++bar)
+        {
+            const double b = bar * 4.0;
+            clip.push_back ({ b + 0.0, b + 1.0, 48 + bar, 90 });
+            clip.push_back ({ b + 0.0, b + 1.0, 55 + bar, 90 });
+            clip.push_back ({ b + 0.0, b + 1.0, 64 + bar, 90 });
+            clip.push_back ({ b + 2.0 / 3.0, b + 1.5, 72 + bar, 80 });
+            clip.push_back ({ b + 3.0, b + 3.5, 60 + 2 * bar, 70 });
+        }
+
+        Rig rig;
+        rig.host.setBpm (127.0);
+        recordSession (rig, sim::loopClip (clip, 8.0, 0.0, 8.0 * 5.4), 0.0, 8.0 * 5.4);
+
+        CHECK (rig.model.reading().mode == ReadingMode::oneLoop);
+        CHECK_EQ (rig.model.detection().candidateBars, 2);
+        CHECK (sameNotes (rig.model.resolved(), clip, 2.0e-3));
+    }
+
+    void testLoopInThreeFour()
+    {
+        // Two bars of 3/4 (six beats), looped.
+        std::vector<sim::Note> clip;
+
+        for (int bar = 0; bar < 2; ++bar)
+        {
+            const double b = bar * 3.0;
+            clip.push_back ({ b + 0.0, b + 1.0, 50 + bar * 3, 90 });
+            clip.push_back ({ b + 1.0, b + 1.5, 62 + bar, 90 });
+            clip.push_back ({ b + 2.0, b + 2.5, 69 - bar, 90 });
+        }
+
+        Rig rig;
+        rig.host.setMeters ({ { 0.0, 3, 4 } });
+        recordSession (rig, sim::loopClip (clip, 6.0, 0.0, 6.0 * 3.4), 0.0, 6.0 * 3.4);
+
+        CHECK (rig.model.reading().mode == ReadingMode::oneLoop);
+        CHECK_EQ (rig.model.detection().candidateBars, 2);
+        CHECK_NEAR (rig.model.reading().loopLengthPpq, 6.0, 1.0e-3);
+        CHECK (sameNotes (rig.model.resolved(), clip));
+        CHECK_EQ (rig.model.resolved().bars.size(), (size_t) 2);
+    }
+
+    void testUserLoopLengthAndRestart()
+    {
+        // The user sets a loop length by hand, then records again: the old choices are gone.
+        const auto clip = makeClip (4);
+        Rig rig;
+        recordSession (rig, sim::loopClip (clip, 16.0, 0.0, 16.0 * 3.5), 0.0, 16.0 * 3.5);
+        CHECK_EQ (rig.model.getLoopBars(), 4);
+
+        rig.model.setLoopBars (2);
+        CHECK (rig.model.reading().source == ReadingSource::user);
+        CHECK_NEAR (rig.model.reading().loopLengthPpq, 8.0, 1.0e-3);
+        CHECK_EQ ((int) rig.model.resolved().notes.size(), 6);   // only the first two bars' worth of positions
+
+        rig.model.redetect();
+        CHECK_EQ (rig.model.getLoopBars(), 4);
+        CHECK (rig.model.reading().source == ReadingSource::detected);
+
+        rig.engine.requestArm();
+        rig.host.play (0.0);
+        rig.host.run (2.0);
+        CHECK (rig.model.raw().recording);
+        CHECK (rig.model.reading().source == ReadingSource::none);
+        CHECK_EQ ((int) rig.model.raw().notes.size(), 2);   // the notes at beats 0 and 1.5
+        rig.host.stop();
+    }
+
     void testBarsToPpq()
     {
         const std::vector<BarStart> bars { { 0.0, 4, 4 }, { 4.0, 3, 4 }, { 7.0, 3, 4 }, { 10.0, 4, 4 } };
@@ -738,6 +813,9 @@ namespace
         { "ring overflow", testRingOverflowMarksCaptureIncomplete },
         { "unrelated midi is ignored", testIgnoresUnrelatedMidi },
         { "note-on with velocity 0", testNoteOnWithZeroVelocityIsANoteOff },
+        { "chords at an awkward tempo", testChordsAtAnAwkwardTempo },
+        { "loop in 3/4", testLoopInThreeFour },
+        { "user loop length, then record again", testUserLoopLengthAndRestart },
         { "bars <-> quarter notes", testBarsToPpq },
     };
 }

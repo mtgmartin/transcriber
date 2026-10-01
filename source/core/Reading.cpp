@@ -10,6 +10,10 @@ namespace
 {
     constexpr double eps = 1.0e-6;
 
+    // A note starts at a sample, so it can land a hair before the bar line or loop start it
+    // belongs to (about 2e-5 quarter notes at 127 bpm). Anything this close counts as on the line.
+    constexpr double boundaryTolerance = 0.01;
+
     // Index of the last bar line at or before ppq (0 if there is none).
     size_t barIndexAt (const std::vector<BarStart>& bars, double ppq)
     {
@@ -63,10 +67,10 @@ namespace
             bar.start = s;
             bar.length = e - s;
 
-            while (next < raw.notes.size() && raw.notes[next].onPpq < s - eps)
+            while (next < raw.notes.size() && raw.notes[next].onPpq < s - boundaryTolerance)
                 ++next;
 
-            for (auto j = next; j < raw.notes.size() && raw.notes[j].onPpq < e - eps; ++j)
+            for (auto j = next; j < raw.notes.size() && raw.notes[j].onPpq < e - boundaryTolerance; ++j)
             {
                 const auto& n = raw.notes[j];
                 BarNote bn;
@@ -279,17 +283,17 @@ namespace
         out.lengthPpq = len;
 
         // The pass that contains the stop, and how far into it the stop is.
-        const auto q = (long) std::floor ((end - phi + eps) / len);
+        const auto q = (long) std::floor ((end - phi + boundaryTolerance) / len);
         const auto stopPhase = end - phi - (double) q * len;
 
-        auto passOf = [&] (double ppq) { return (long) std::floor ((ppq - phi + eps) / len); };
+        auto passOf = [&] (double ppq) { return (long) std::floor ((ppq - phi + boundaryTolerance) / len); };
         auto phaseOf = [&] (double ppq, long pass) { return std::max (0.0, ppq - phi - (double) pass * len); };
 
         // The pass each stretch of the loop is taken from: the final pass up to the stop point,
         // the pass before it for the rest.
-        auto ownerPass = [&] (double phase) { return phase < stopPhase - eps ? q : q - 1; };
+        auto ownerPass = [&] (double phase) { return phase < stopPhase - boundaryTolerance ? q : q - 1; };
 
-        const auto lastPass = stopPhase > eps ? q : q - 1;
+        const auto lastPass = stopPhase > boundaryTolerance ? q : q - 1;
         out.numPasses = (int) std::max<long> (1, lastPass - passOf (raw.startPpq) + 1);
 
         for (const auto& n : raw.notes)
