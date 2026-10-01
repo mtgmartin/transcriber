@@ -12,7 +12,7 @@ sheet music (piano, drums, guitar/bass + tab) with PDF export.
 
 Key rules:
 - Verify everything, don't assume, and ask when something is unclear.
-- Claude writes all the code; builds run only on GitHub Actions (no local toolchain).
+- Claude writes all the code; the plugin builds only on GitHub Actions. The JUCE-free core (`source/core`) and its unit tests also compile locally with MSYS2 g++ (command in the plan's Build loop): run them before every push.
 - Claude runs Live tests itself with mouse/keyboard (`tools/live/`). Never install Live Remote Scripts or change Live preferences.
 - Plugin codes `Mtgm`/`Trsc` in `CMakeLists.txt` must never change.
 - Update the Status section of `docs/BUILD_PLAN.md` at the end of each session.

@@ -1,6 +1,6 @@
 # Transcriber build plan
 
-Last updated 2026-10-01. **Current state: Phase 1 complete (gate passed). Next: Phase 2, the capture engine.**
+Last updated 2026-10-01. **Current state: Phase 2 code complete and green in CI (build 0.2.0); Live tests (docs/phase2-tests.md) still to run. Next: finish Phase 2 in Live, then Phase 3.**
 
 Transcriber is a Windows VST3 plugin for Ableton Live 11. It records the MIDI that plays on its track,
 in Session or Arrangement View, and turns it into editable sheet music for piano, drum kit or
@@ -19,6 +19,8 @@ https://claude.ai/artifact/DKgFpy21eNeM8hECT8LyFT. This file is the working copy
   Verified / Partial / Unverified. Check library APIs against the pinned version's source,
   e.g. `gh api repos/juce-framework/JUCE/contents/<path>?ref=9.0.3`, before writing code.
 - **Claude writes all the code.** The user directs and tests.
+- **The plugin only builds on GitHub Actions**, but the JUCE-free core and its unit tests compile locally
+  with MSYS2 g++ (see Build loop); run them before every push.
 - **Claude runs the tests in Live itself, using mouse and keyboard only** (see §8).
   - Do **not** install Live Remote Scripts or control surfaces, and don't change Live
     preferences. The user declined this.
@@ -36,6 +38,7 @@ https://claude.ai/artifact/DKgFpy21eNeM8hECT8LyFT. This file is the working copy
   - Second monitor: 1920×1080 at 125%, physical origin (321, 1440). The Claude app is here.
 - Keyboard layout: **Croatian.** Typing `\` needs AltGr, so paste paths through the clipboard instead.
 - Installed tools:
+  - **MSYS2 g++ 14.2** at `C:msys64Crt64in` (found in Phase 2): only for the JUCE-free core and its tests.
   - Git 2.56.0 and GitHub CLI 2.102.0, logged in as `mtgmartin`.
   - Ableton Live 11 Suite 11.3.13.
   - WebView2 runtime 154.x.
@@ -59,13 +62,18 @@ https://claude.ai/artifact/DKgFpy21eNeM8hECT8LyFT. This file is the working copy
 | `cmake/Dependencies.cmake` | Pinned, hash-checked downloads: WebView2 SDK nupkg 1.0.3485.44, and from npm Verovio 6.3.0, jsPDF 4.2.1, svg2pdf.js 2.8.1. It also appends the Verovio ready handler (see §6). |
 | `.github/workflows/build.yml` | windows-2022 runner, VS 2022 generator, pluginval v1.0.4 at strictness 5, uploads the `Transcriber-VST3` artifact. |
 | `scripts/install.ps1` | Downloads the latest successful build and copies it to the VST3 folder. Needs admin. |
-| `source/` | Phase 1 diagnostic plugin: `DiagnosticLog` (lock-free FIFO to JSONL), `Capture` (+ MIDI-file compare), processor, WebView2 editor. |
+| `source/core/` | The capture core, **no JUCE dependency** (namespace `trs`): `CaptureEngine` (audio thread: state machine and lock-free ring), `CaptureModel` (records to notes, segments, bars, tempo; holds the reading), `Reading` (loop detection and the One loop / As played rules). |
+| `source/` | Plugin glue: `CaptureService` (drain thread and UI data), `MidiCompare` (the MIDI-file comparison), `DiagnosticLog` (JSONL log, **off unless switched on in the page**), processor, WebView2 editor. |
+| `tests/core/` | Unit tests for the core: `test_main.cpp` plus `SimHost.h`, a simulated Live (blocks, loop-split blocks, bar lines, tempo lag, stop flush). Run by CI with ctest; run locally with g++ (see Build loop). |
 | `web/` | Bundled UI page (`index.html`, `app.js`, `style.css`) and three MEI test scores. |
 | `tests/fixtures/*.mid` | Test clips used in Phase 1 (format in §8). |
-| `tools/live/` | PowerShell helpers to drive Live and read logs (§8). |
-| `docs/phase1-tests.md`, `docs/phase1-results.md` | Phase 1 test sheet and full results. |
+| `tools/live/` | PowerShell helpers to drive Live and read logs (§8), and `make-phase2-fixtures.ps1` (Phase 2 test clips). |
+| `docs/phase1-tests.md`, `docs/phase1-results.md`, `docs/phase2-tests.md` | Test sheets and results. |
 
 ### Build loop
+0. Run the core unit tests locally (about 10 s; Git Bash):
+   `export PATH="$PATH:/c/msys64/ucrt64/bin"; g++ -std=c++17 -O1 -Wall -Wextra -Wshadow -Wconversion -Wsign-conversion -Isource -Itests/core source/core/*.cpp tests/core/test_main.cpp -o /tmp/core_tests.exe && /tmp/core_tests.exe`
+   (Check g++'s exit status itself: piping it to `head` hides a failed compile and runs a stale exe.)
 1. Edit, commit, then `git push`.
 2. Watch CI:
    - `gh run list --repo mtgmartin/transcriber --limit 1`
@@ -85,6 +93,8 @@ https://claude.ai/artifact/DKgFpy21eNeM8hECT8LyFT. This file is the working copy
 - **Verovio drums:** position notes with `@loc` and **no** `@oct`: 0 = bottom line, 5 = 3rd space (snare), 9 = space above the staff (hi-hat), 10 = first ledger line above (crash), -1 = space below (hi-hat pedal). Noteheads use `head.shape="x"`.
 - **Verovio tab:** `staffDef notationtype="tab.guitar" lines="6"`, `<clef shape="TAB"/>`, `<tuning tuning.standard="guitar.standard"/>`, and `tabGrp` holding `note tab.course tab.fret` (course 1 = top line).
 - **svg2pdf.js drops `@font-face`.** Text uses jsPDF's standard fonts, which are ASCII only; add a TTF for non-ASCII titles.
+- **Notes land on a sample, not exactly on the line.** At 127 bpm a downbeat can arrive 2e-5 quarter notes early. Anything that groups notes by bar or pass uses `boundaryTolerance` (0.01) in `Reading.cpp`; a test at 127 bpm caught this.
+- **Windows long paths:** a plain `git clone` of JUCE fails on this machine ("Filename too long"), so JUCE can't be compiled locally.
 - **PDF sizing:** `pageWidth:4200, pageHeight:5940, scale:50, mmOutput:true` gives exactly A4 with smaller notation.
 
 ---
@@ -251,8 +261,15 @@ Full results are in `docs/phase1-results.md`.
 - Drawn tempo automation envelopes.
 - Export Audio.
 
-### Phase 2: capture engine (NEXT)
-**Build:**
+### Phase 2: capture engine (CODE DONE, LIVE TESTS PENDING)
+**What was built (build 0.2.0, CI green, 27 unit tests):**
+- `CaptureEngine`: idle → armed → recording → stopped. Arm waits for the transport to play (or starts at once if it already does). Recording ends when Live stops or the user presses Stop. Only note-on/off and CC 120/123 are recorded. Records cross to the other thread in a lock-free ring (32768 records); overflow is counted and flagged on the capture.
+- `CaptureModel`: capture time = song time of the first block, then continuous. A jump of more than `0.05 + 2 blocks` quarter notes starts a new *segment*; it is a loop *wrap* if it goes backwards while the host's looping flag is on. Bar lines are the host's reported bar starts (a bar line before the latest one is ignored), the meter comes with each. The note-offs and CC 123 Live sends in the block where it stops are flagged, so the notes they end are known to be **held at stop**.
+- `Reading`: detection and resolving. Host wrap → One loop with the observed length. Otherwise the shortest bar pattern that repeats through the whole recording from the first full bar: at least 2 periods, at most 10% of bar pairs differ, and the differences never fill a whole period (that is a new section). Bars are compared by pitch, onset (±0.02) and length (±0.1, except notes cut by the stop). The best candidate (at most 50% differing) is kept even when not chosen, so switching to One loop by hand starts from it. One loop is resolved exactly as in section 2, including the held-at-stop rule; the bar lines and tempo come from the latest pass recorded in full.
+- `CaptureService` + page: Record/Stop, Clear, One loop / As played, loop length in bars, Detect again, and a piano-roll preview coloured by pass. The Phase 1 test tools are under a collapsed heading; the MIDI-file comparison now compares the *resolved* notes.
+- Limits of the first version: loops are found on whole bars only (a 6-beat clip in 4/4 reads as 2 clips = 3 bars); the loop starts at the first full bar; a loop wrap in the middle of a bar loses that bar line; recordings with a user relocation are kept in order but have no bar lines across the jump.
+
+**Original build list:**
 - Record states: Idle → Armed (wait for playing) → Recording → Stopped.
 - Event PPQ = host PPQ + sampleOffset / sampleRate × BPM / 60. Verified exact in Phase 1.
 - Lock-free FIFO with no allocation or locks on the audio thread. Reuse the `DiagnosticLog` pattern.
@@ -401,7 +418,10 @@ Tools in `tools/live/`. Copy them to the scratchpad or run them in place.
 
 ## 9. Status (update every session)
 
-- **Done:** Phases 0 and 1. Latest build: 0.1.1 (CI green, run 36922617978).
-- **Waiting on the user:** install 0.1.1 with `scripts\install.ps1` from an admin PowerShell, with Live closed.
-- **Next:** Phase 2. Start by replacing the diagnostic processor with the real capture engine, keeping
-  `DiagnosticLog` behind a debug flag, and adding a JUCE `UnitTest` console target to CI.
+- **Done:** Phases 0 and 1. Phase 2 code: build 0.2.0 (CI green, run 36927640929; 27 unit tests pass in CI and locally).
+  The unit tests cover everything in "Done when" except the Live parts.
+- **Waiting on the user:** install 0.2.0 with `scripts\install.ps1` from an admin PowerShell, with Live closed
+  (0.1.1 was never installed; 0.2.0 includes its fixes).
+- **Next:** run `docs/phase2-tests.md` in Live (test clips are in `test Project\Transcriber tests\` as `t21`–`t23`,
+  made by `tools/live/make-phase2-fixtures.ps1`), fix what it finds, record the results in `docs/phase2-results.md`,
+  then start Phase 3.
