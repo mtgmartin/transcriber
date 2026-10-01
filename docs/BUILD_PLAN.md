@@ -1,0 +1,407 @@
+# Transcriber build plan
+
+Last updated 2026-10-01. **Current state: Phase 1 complete (gate passed). Next: Phase 2, the capture engine.**
+
+Transcriber is a Windows VST3 plugin for Ableton Live 11. It records the MIDI that plays on its track,
+in Session or Arrangement View, and turns it into editable sheet music for piano, drum kit or
+guitar/bass, with A4 PDF export. Editing the score never touches the MIDI.
+
+The illustrated version of this plan (with the research sources) is at
+https://claude.ai/artifact/DKgFpy21eNeM8hECT8LyFT. This file is the working copy. Update its
+**Status** section at the end of every session.
+
+---
+
+## 1. How to work on this project
+
+### Working rules (from the user)
+- **Verify everything, don't assume, and ask when something is unclear.** Mark claims
+  Verified / Partial / Unverified. Check library APIs against the pinned version's source,
+  e.g. `gh api repos/juce-framework/JUCE/contents/<path>?ref=9.0.3`, before writing code.
+- **Claude writes all the code.** The user directs and tests.
+- **Claude runs the tests in Live itself, using mouse and keyboard only** (see §8).
+  - Do **not** install Live Remote Scripts or control surfaces, and don't change Live
+    preferences. The user declined this.
+  - Modifying and saving the `test Project` Live set is allowed.
+- Commit each step with a clear message and push. CI does the building.
+  - End each commit message with the `Co-Authored-By` attribution line.
+- Outward-facing or irreversible actions need the user's OK first (e.g. creating repos or
+  releases, deleting things).
+
+### Environment (verified)
+- Windows 11 Pro, i7-11800H, 16 GB RAM. **C: has about 9 GB free, so there is no local C++ toolchain.**
+  Everything compiles on GitHub Actions.
+- Monitors:
+  - Main monitor: 2560×1440 at 100% (Live runs here).
+  - Second monitor: 1920×1080 at 125%, physical origin (321, 1440). The Claude app is here.
+- Keyboard layout: **Croatian.** Typing `\` needs AltGr, so paste paths through the clipboard instead.
+- Installed tools:
+  - Git 2.56.0 and GitHub CLI 2.102.0, logged in as `mtgmartin`.
+  - Ableton Live 11 Suite 11.3.13.
+  - WebView2 runtime 154.x.
+- There is **no Python or Node.** Use PowerShell (5.1) or Git Bash.
+- **The PATH in the app's PowerShell can be stale.** Prefix git/gh commands with:
+  `$env:Path = [System.Environment]::GetEnvironmentVariable("Path","Machine") + ";" + [System.Environment]::GetEnvironmentVariable("Path","User");`
+  In Git Bash, use `export PATH="$PATH:/c/Program Files/Git/cmd:/c/Program Files/GitHub CLI"`.
+- **The shell is not elevated.** Installing a build into `C:\Program Files\Common Files\VST3` needs the
+  user to run `powershell -ExecutionPolicy Bypass -File scripts\install.ps1` from an admin
+  PowerShell, with Live closed.
+- The session scratchpad gets cleared between days. Keep anything reusable in the repo (e.g. `tools/live/`).
+
+### Repository
+- Public repo: https://github.com/mtgmartin/transcriber
+- Commit identity: `mtgmartin <75752557+mtgmartin@users.noreply.github.com>`. It is set per repo, and the no-reply address keeps the user's real email private.
+- `test Project/` is the user's Live set, **gitignored**. Never commit it.
+
+| Path | What it is |
+|---|---|
+| `CMakeLists.txt` | Plugin target. **Codes `Mtgm`/`Trsc` must never change**, or saved Live Sets lose the plugin. |
+| `cmake/Dependencies.cmake` | Pinned, hash-checked downloads: WebView2 SDK nupkg 1.0.3485.44, and from npm Verovio 6.3.0, jsPDF 4.2.1, svg2pdf.js 2.8.1. It also appends the Verovio ready handler (see §6). |
+| `.github/workflows/build.yml` | windows-2022 runner, VS 2022 generator, pluginval v1.0.4 at strictness 5, uploads the `Transcriber-VST3` artifact. |
+| `scripts/install.ps1` | Downloads the latest successful build and copies it to the VST3 folder. Needs admin. |
+| `source/` | Phase 1 diagnostic plugin: `DiagnosticLog` (lock-free FIFO to JSONL), `Capture` (+ MIDI-file compare), processor, WebView2 editor. |
+| `web/` | Bundled UI page (`index.html`, `app.js`, `style.css`) and three MEI test scores. |
+| `tests/fixtures/*.mid` | Test clips used in Phase 1 (format in §8). |
+| `tools/live/` | PowerShell helpers to drive Live and read logs (§8). |
+| `docs/phase1-tests.md`, `docs/phase1-results.md` | Phase 1 test sheet and full results. |
+
+### Build loop
+1. Edit, commit, then `git push`.
+2. Watch CI:
+   - `gh run list --repo mtgmartin/transcriber --limit 1`
+   - `gh run watch <id> --repo mtgmartin/transcriber --exit-status`
+   - A build takes about 4.5 min (about 2 min of that is fetching JUCE).
+3. Check the log for warnings in our code:
+   - `gh run view <id> --log | grep -E 'warning C[0-9]+' | grep -i 'source[/\\]'`
+   - Keep this at 0.
+4. Have the user install the build (admin), then test in Live (§8).
+
+### Gotchas found so far
+- **pluginval.exe is a GUI-subsystem program.** PowerShell doesn't wait for it, so launch it with `Start-Process -Wait -PassThru` and check `.ExitCode`.
+- **Don't name CMake variables `<Package>_ROOT`** (e.g. `WEBVIEW2_ROOT`). CMake treats them as find_package hints.
+- **JUCE 9 moved `AudioProcessor`** into `juce_audio_processors_headless`. `#include <juce_audio_processors/juce_audio_processors.h>` still works.
+- **JUCE 9 `Graphics::setFont`:** use the float overload, e.g. `g.setFont (16.0f)`.
+- **Verovio:** set options **before** `loadData`.
+- **Verovio drums:** position notes with `@loc` and **no** `@oct`: 0 = bottom line, 5 = 3rd space (snare), 9 = space above the staff (hi-hat), 10 = first ledger line above (crash), -1 = space below (hi-hat pedal). Noteheads use `head.shape="x"`.
+- **Verovio tab:** `staffDef notationtype="tab.guitar" lines="6"`, `<clef shape="TAB"/>`, `<tuning tuning.standard="guitar.standard"/>`, and `tabGrp` holding `note tab.course tab.fret` (course 1 = top line).
+- **svg2pdf.js drops `@font-face`.** Text uses jsPDF's standard fonts, which are ASCII only; add a TTF for non-ASCII titles.
+- **PDF sizing:** `pageWidth:4200, pageHeight:5940, scale:50, mmOutput:true` gives exactly A4 with smaller notation.
+
+---
+
+## 2. Requirements (user decisions; do not re-ask)
+
+| Area | Decision |
+|---|---|
+| Name | **Transcriber** |
+| Platform | Windows only, VST3 only, Ableton Live 11 Suite 11.3.13 |
+| Licence | Personal use only, not distributed (JUCE Starter/AGPL is fine). The repo is public. |
+| Input | Record while Live plays the track. **One plugin instance = one track.** |
+| Kind of MIDI | Mostly drawn in the piano roll, so it is already on the grid. Grid quantization is enough for v1. |
+| Views | Session **and** Arrangement. In Session View the user sometimes loops one clip and sometimes launches several clips in a row. |
+| One looping clip ("One loop") | Each pass overwrites the previous one. If stopped partway, the part covered by the final pass comes from it, and the rest comes from the pass before. A note belongs to the pass in which it starts. A note still held at stop takes the length of the same-pitch note at the same position in the previous pass; if there is none, it ends at the stop point. |
+| Clips in sequence ("As played") | Everything written out in order, exactly as played, nothing overwritten. |
+| Which reading | Detected automatically; the user can switch it and edit the loop length. Every pass is stored, so switching rebuilds the score from the capture. |
+| Tempo & meter | Both can change within a song. **Tempo-mark rule (accepted):** show a mark where the tempo changes and then holds for at least one beat; mark ramps *accel.*/*rit.* followed by the new tempo. |
+| Instruments v1 | Piano (grand staff); drum kit; guitar and bass (standard notation **plus tablature**). Standard tuning only: 6-string guitar, 4-string bass. |
+| Drums | Ableton Drum Rack plus a custom map editor with learn mode, GM/GM2 presets, and JSON import/export. No specific third-party drum plugin. |
+| Editing | All of: notes & rhythms · spelling & layout · markings & text · page layout. |
+| Re-recording | Each recording becomes a new score version. Old versions and their edits are kept. |
+| Paper | A4 by default (Letter available). |
+
+---
+
+## 3. Verified constraints that shape the design
+
+- **A VST3 plugin cannot read clip data.** MIDI only arrives in `process()` during playback. ARA has no MIDI clips, and Live isn't an ARA host.
+- **Live 11 won't load MIDI-only VST3s.** So Transcriber is declared as an instrument (`IS_SYNTH`, `NEEDS_MIDI_INPUT`), outputs silence, and has no MIDI output.
+- **There is no key signature from the host.** Detect the key, and let the user override it.
+- **Setups that work** (Phase 1.1):
+  - A plain track.
+  - An Instrument Rack chain next to the instrument or Drum Rack. Never inside a Drum Rack pad: it would get the pad's *Play* note.
+  - *MIDI To* routing into `1-Transcriber`.
+- **What Live 11 sends every block:**
+  - Sent: PPQ position, BPM, time signature, last bar start PPQ, loop points, sample time, playing and looping flags.
+  - Never sent: bar count, host time.
+- **Arrangement loop:** the position jumps back, and the looping flag is true. Live splits the audio block exactly at the loop point, so positions stay exact.
+- **Session View:** the position runs on continuously.
+  - There is **no** loop signal and **no** clip-change signal.
+  - The loop points shown are the Arrangement loop brace, not the clip's.
+  - A new clip starts on the launch-quantization bar line.
+- **Bar lines must come from the host's reported bar starts.**
+  - Arrangement time-signature markers give a correct grid (e.g. 0, 4, 7, 10, 14).
+  - Changing the global meter during playback re-grids from bar 1, creating an odd short bar.
+  - The meter must be editable.
+- **Tempo changes** are reported in the next block. Positions in quarter notes stay exact.
+- **On stop**, Live sends CC 123 (All Notes Off) plus note-offs for held notes.
+- **Keyboard:** the WebView page receives every key (letters, Space, Tab, arrows, F1–F12, Ctrl+C/V/Z), and Live reacts to none of them.
+  - While the page has focus, Live's shortcuts don't work.
+  - Show a hint to click outside the plugin to get them back.
+- **Window:**
+  - Resizing works.
+  - The page is sharp at 125% scaling.
+  - Live keeps hidden editors alive, so WebViews aren't recreated when switching tracks.
+- **State:** 5 MB saves and restores intact (getState 8 ms, restore 17 ms). Keep the state under about 5 MB and warn above that.
+- **Freeze** *does* feed MIDI and sets the VST3 offline flag (about 37× real time). Capture doesn't depend on it; it's a possible later feature.
+
+---
+
+## 4. Architecture
+
+```
+Live clip --playback--> [Instrument Rack chain | MIDI To] --> Capture engine (audio thread)
+   --lock-free FIFO--> Raw capture (read-only, all passes kept)
+   + Instrument profile / drum map --> Transcription pipeline --> Score document (editable, stable IDs)
+   --> MEI writer --> Verovio JS in WebView2 --> Editor UI --(edit commands)--> Score document
+                                             --> jsPDF + svg2pdf.js --> PDF (native Save dialog)
+   Raw capture + Score --> plugin state (gzip, schemaVersion) saved in the .als
+   Plugin audio output: silence only; no MIDI out.
+```
+
+**Why the MIDI can't change:**
+1. No API exists for a plugin to write a clip.
+2. The plugin has no MIDI output.
+3. The raw capture is read-only; edits only touch the score document.
+
+**Stack** (all verified):
+
+| Part | Choice |
+|---|---|
+| Plugin framework | JUCE 9.0.3, via FetchContent (bundles VST3 SDK 3.8.0) |
+| Build | CMake ≥ 3.22, MSVC (VS 2022) |
+| UI | JUCE WebBrowserComponent on WebView2 (static loader) |
+| Engraving | Verovio 6.3.0 JS (LGPL-3.0) |
+| Music fonts | Bravura and Leland (OFL) |
+| PDF | jsPDF 4.2.1 + svg2pdf.js 2.8.1 (MIT) |
+| Validation | pluginval |
+| Unit tests | JUCE `UnitTest` (to be added) |
+| Fallbacks (not needed so far) | alphaTab (tab), native Verovio C++, libharu, WebView2 `PrintToPdf` |
+
+### Data model
+| Entity | Fields |
+|---|---|
+| `PluginState` | schemaVersion, activeVersionId, versions[], drumMaps[], uiPrefs. Gzip-compressed into VST3 state. |
+| `Version` | id, name, createdAt, rawCapture, profileSnapshot, transcriptionSettings, score |
+| `RawCapture` | notes[] {onPpq, offPpq, pitch, velocity, channel, passIndex}, passes[], reading {mode: oneLoop or asPlayed; loopStartPpq; loopLengthPpq; source: host, detected or user}, stopPpq, tempoMap[], meterMap[] (from host bar starts), sampleRate, hostInfo. Read-only except for `reading`. |
+| `InstrumentProfile` | type, staves, clefs, transposition, strings (standard tuning), drumMapId. A copy is stored with each version. |
+| `DrumMap` | entries[] {midiNote, name, staffPosition, notehead, voice, articulation, ghostVelocityThreshold} |
+| `Score` | meta; parts → staves → measures → layers → events; spanners; layout. Stable IDs equal the MEI `xml:id`s. Changes only through `Command` objects (undo/redo). |
+
+---
+
+## 5. Transcription pipeline (v1)
+
+| # | Stage | Method |
+|---|---|---|
+| 1 | Clean-up | Pair note-on/off and close notes at CC 123/stop. Drop zero-length notes and duplicates. Apply the reading: One loop uses the overwrite rule; As played lays out all passes in order. |
+| 2 | Bars, meter, tempo | Bars from the host's reported bar starts plus time signature per block (meterMap). Tempo map. Tempo marks per the accepted rule. Marks can be edited. |
+| 3 | Quantization | Grid with a user-chosen division (1/4 to 1/32). Per beat, pick the straight or triplet grid with the lower error (music21-style divisors 4 and 3). Quantize durations separately. Flag off-grid notes. |
+| 4 | Staves & voices | Piano: split point (default middle C) plus a continuity heuristic, editable. Drums: voice from the drum map (hands up, feet down). Guitar/bass: one voice, chords allowed. |
+| 5 | Durations | Split at barlines and at the 4/4 imaginary barline with ties. Rests fill gaps. Beam by meter, never across the imaginary barline (Berklee rule). |
+| 6 | Key | Krumhansl–Schmuckler with Temperley's profiles, user override. |
+| 7 | Spelling | PS13 (Meredith 2006). partitura (Apache-2.0) is a reference for testing. User can respell. |
+| 8 | Tab | Dynamic-programming string/fret assignment that minimizes movement and span. Our own design; benchmark it on riffs. |
+| 9 | Output | `Score` with stable IDs. |
+
+**Session loop detection** (our design; Phase 2):
+- Find the shortest bar count P, and a start bar, such that the recording repeats every P bars.
+- If it repeats at least twice, the reading is One loop · P bars. Otherwise it is As played.
+- Allow a small share of differing bars. Always show the result, and let the user change it.
+- Known manual-fix case: a clip edited between passes reads as As played, and the user switches it to One loop.
+
+**Drum defaults** (Weinberg / PAS):
+
+| Instrument | Staff position | GM note |
+|---|---|---|
+| Kick | 1st space | 36 |
+| Snare | 3rd space | 38 |
+| Side stick | x on the 3rd space | 37 |
+| Hi-hat (closed / open "o") | x in the space above the staff | 42 / 46 |
+| Hi-hat pedal | x below the staff | 44 |
+| Ride | x on the top line | 51 |
+| Crash | x on the 1st ledger line above | 49 |
+| Toms | Depends on the number of toms (Weinberg Ex. 4) | 50, 48, 47, 45, 43, 41 |
+
+- Ghost notes go in parentheses below a velocity threshold.
+- Unmapped notes get a warning; they are never silently dropped.
+
+**Guitar and bass:**
+- Guitar: treble clef with 8 below, sounding E2 A2 D3 G3 B3 E4.
+- Bass: bass clef (8vb), E1 A1 D2 G2.
+- The tab staff goes underneath the standard staff.
+
+---
+
+## 6. Phase status and remaining work
+
+### Phase 0: setup and a plugin that loads (DONE)
+Repo, CI, install script, and a silent VST3 instrument. Confirmed loading in Live by the user.
+
+### Phase 1: feasibility tests (DONE, gate passed 2026-10-01)
+Full results are in `docs/phase1-results.md`.
+
+**0.1.1 fixes:**
+- Verovio sometimes missed `onRuntimeInitialized` (1 load in 6). The build now appends the ready handler to the Verovio JS itself (`cmake/Dependencies.cmake`), and the page shows an error after 30 s.
+- `devicePixelRatio` changes are now logged.
+
+**Status:** 0.1.1 built and passed CI, but is **not yet installed** by the user.
+
+**Not tested:**
+- 44.1 kHz.
+- Drawn tempo automation envelopes.
+- Export Audio.
+
+### Phase 2: capture engine (NEXT)
+**Build:**
+- Record states: Idle → Armed (wait for playing) → Recording → Stopped.
+- Event PPQ = host PPQ + sampleOffset / sampleRate × BPM / 60. Verified exact in Phase 1.
+- Lock-free FIFO with no allocation or locks on the audio thread. Reuse the `DiagnosticLog` pattern.
+- Note pairing. Handle CC 123 and note-offs at stop.
+- Tempo map and meter map from the host's bar starts.
+- Pass detection:
+  - Arrangement: a backward jump with the looping flag true.
+  - Session: repeating-pattern search.
+- The overwrite rule (One loop) and the in-order layout (As played), re-run whenever the reading or loop length changes.
+- UI control to switch the reading and edit the loop length.
+- Unit tests (JUCE `UnitTest` console target in CI) using a simulated playhead. Cases:
+  - fixed blocks
+  - Arrangement loops with a split block
+  - Session-style continuous time
+  - a clip sequence
+  - stop mid-pass
+  - tempo ramps
+  - meter changes
+- Keep the MIDI-file comparison tool.
+- Temporary UI: a note list or piano-roll preview.
+
+**Done when:**
+- 3-minute piano and drum parts match their clips note for note in both views.
+- In Live, editing a clip between passes and stopping partway gives new notes up to the stop point and old notes after it.
+- Session loop length is detected correctly for 1-, 2-, 4- and 8-bar clips.
+- Verse ×2 then chorus ×4 is read as As played and written out in full.
+- A 4/4 → 3/4 → 4/4 song keeps every bar line in place.
+- pluginval passes at strictness 5, and the unit tests pass in CI.
+
+### Phase 3: score model, versions, saving
+**Build:**
+- `Score` model with stable IDs, and commands with undo/redo.
+- Versions: create on stop, list, rename, duplicate, delete (with an in-UI confirmation).
+- Serialization: JSON/ValueTree + gzip, schemaVersion plus a migration hook, and a state-size display that warns at 5 MB.
+
+**Done when:**
+- Round-trip tests pass.
+- In Live: record 3 takes, save, close, reopen; all versions are back and the raw capture is unchanged.
+
+### Phase 4: transcription pipeline (piano first)
+**Build:**
+- Stages 1–7 as separate functions with unit tests.
+- Golden files (fixture MIDI → expected score JSON), including:
+  - ties over barlines, triplets, chords, overlaps
+  - a pickup bar
+  - meter changes
+  - tempo marks and ramps
+- The user supplies about 10 reference clips.
+
+**Done when:** grid-quantized clips come out 100% correct, and key and spelling are correct or the errors are listed and accepted.
+
+### Phase 5: rendering and UI shell
+**Build:**
+- MEI 5 writer.
+- Bundled UI with page and continuous views, zoom, and click-to-select through `xml:id`.
+- Toolbar: Record, version picker, profile, grid, key override.
+
+**Done when:** a recorded piano take shows correctly in Live, and 200 bars re-render in under 1 s.
+
+### Phase 6: drums, guitar, bass
+**Build:**
+- Drum profile and map editor with learn mode, GM/GM2 presets, JSON import/export, and a ghost-note threshold.
+- Guitar and bass profiles, plus the tab algorithm.
+
+**Done when:**
+- A Drum Rack groove with a custom map gives a correct two-voice score.
+- A guitar riff and a bassline give standard notation plus playable tab, confirmed by the user.
+
+### Phase 7: editor
+Built in four parts:
+
+| Part | Scope |
+|---|---|
+| 7a | Notes & rhythms |
+| 7b | Spelling & layout |
+| 7c | Markings & text |
+| 7d | Page layout |
+
+- Each part ships as its own build.
+- Every operation gets a unit test (apply, then undo, gives back the original) plus a check in Live.
+- Keyboard shortcuts are allowed (Phase 1.4).
+- Text is entered in plugin dialogs.
+
+### Phase 8: PDF export
+- Proper margins and A4 notation size. Phase 1's PDF had almost no left margin and small notation.
+- Embedded fonts for titles and text.
+
+**Done when:** piano, drum and guitar/tab PDFs open in Edge and Acrobat and match the screen.
+
+### Phase 9: hardening
+- Raise pluginval to strictness 8.
+- Stress tests: 10-minute songs, 5 instances, rapid play/stop, dense MIDI, schema migration.
+- Crash safety.
+- A user guide.
+- Add the Steinberg validator via pluginval `--vst3validator` (it needs a built validator).
+
+---
+
+## 7. Risks still open
+| Risk | Mitigation |
+|---|---|
+| Session reading misdetected (an edited clip reads as As played, or a repeating sequence reads as One loop) | Always show the reading, allow a one-click switch, and keep every pass. |
+| Off-grid notes | Flag them; allow re-quantizing a selection. |
+| Verovio tab or percussion edge cases | Feed MEI only. alphaTab is the fallback for tab. |
+| Large state | Compression, a warning at 5 MB, an optional side file. |
+| Slow iteration (CI only) | Unit tests and the simulated host catch most issues before Live testing. |
+
+---
+
+## 8. Testing in Live: how Claude does it
+
+Tools in `tools/live/`. Copy them to the scratchpad or run them in place.
+
+| Script | Use |
+|---|---|
+| `shot.ps1 -Out f.png -Scale 0.5 [-X -Y -W -H]` | DPI-aware screenshot of a screen region (physical pixels). Read the PNG to see it. |
+| `input.ps1 "click x y; wait 300; key ctrl+s; type 120; drag x1 y1 x2 y2; slowdrag x1 y1 x2 y2 steps; scroll x y -5; rclick x y; dclick x y"` | SendInput mouse and keyboard. Synthetic keys arrive with an empty `KeyboardEvent.code`, but `key` is correct. |
+| `midi.ps1` → `Write-MidiFile path notes lengthBeats` | Notes are `@(pitch, startBeat, durBeats, velocity)`. Live names MIDI 60 as C3. |
+| `analyze-log.ps1 -Path <log.jsonl>` | Summarizes a plugin log: events, keys, transport, loop wraps, notes. |
+
+**Method:**
+- **Test clips:** write `.mid` files into `test Project\Transcriber tests\`. They appear in Live's browser under *Current Project*, and you drag them into clip slots or the arrangement.
+  - Live asks whether to import tempo/time signature when you drop into the Arrangement; answer **No**.
+- **Ground truth:** the same `.mid` files, using the plugin's "Compare with MIDI file…" tool.
+- **Logs:** each instance writes `%APPDATA%\Transcriber\logs\phase1-<date>-<time>-<instance>.jsonl`.
+- **File dialogs:** paste paths via the clipboard. Save the user's clipboard first and restore it afterwards.
+- **Finding plugin windows:** locate them with Win32 `EnumWindows`/`GetWindowRect` (title `Transcriber/<track>`) rather than guessing coordinates.
+  - The title bar is about 15 px below the window's top edge.
+- **Live behaviour to remember:**
+  - Live auto-hides plugin windows of unselected tracks.
+  - Space stops the transport but **Session clips keep their playing state**. Use Stop All Clips, the master track's clip-stop button.
+  - The global tempo field drag is extremely sensitive (it went to 999 BPM). Type values instead.
+  - Insert time-signature markers via *Create → Insert Time Signature Change* (at the insert marker), then type e.g. `3/4`.
+  - Freeze is in the track header's right-click menu.
+
+**Current `test Project` contents:**
+- Tracks:
+  - 8-Transcriber: clips in slots 1–4 (loop4, clipA, clipB, timing) and the piano clip in slot 9.
+  - DRUMS: Instrument Rack containing the Drum Rack plus a Transcriber chain.
+  - 5-MIDI: MIDI To → 8-Transcriber.
+  - 7-Transcriber.
+- Arrangement: time-signature markers at bars 1 (4/4), 2 (3/4) and 4 (4/4).
+- Saved with a 5 MB test state (6.4 MB file). Use "Use empty state" in the Transcriber window to shrink it.
+
+---
+
+## 9. Status (update every session)
+
+- **Done:** Phases 0 and 1. Latest build: 0.1.1 (CI green, run 36922617978).
+- **Waiting on the user:** install 0.1.1 with `scripts\install.ps1` from an admin PowerShell, with Live closed.
+- **Next:** Phase 2. Start by replacing the diagnostic processor with the real capture engine, keeping
+  `DiagnosticLog` behind a debug flag, and adding a JUCE `UnitTest` console target to CI.
