@@ -55,9 +55,7 @@ void CaptureEngine::pushBlock (const HostBlock& b) noexcept
     if (b.looping)     flags |= Record::looping;
     if (b.hasTimeSig)  flags |= Record::hasTimeSig;
     if (b.hasBarStart) flags |= Record::hasBarStart;
-    r.flags = (uint8_t) flags;|= Record::looping;
-    if (b.hasTimeSig)  r.flags |= Record::hasTimeSig;
-    if (b.hasBarStart) r.flags |= Record::hasBarStart;
+    r.flags = (uint8_t) flags;
 
     push (r);
 }
