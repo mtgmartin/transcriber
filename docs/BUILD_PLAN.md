@@ -1,6 +1,6 @@
 # Transcriber build plan
 
-Last updated 2026-10-02. **Current state: Phases 0-3 done and tested in Live (Phase 3 results: docs/phase3-results.md). Next: Phase 4, the transcription pipeline (piano first).**
+Last updated 2026-10-02. **Current state: Phases 0-3 done and tested in Live. Phase 4 (piano transcription) is built and green in CI (build 0.4.0); its Live check (docs/phase4-tests.md) and the user's reference clips are still to come.**
 
 Transcriber is a Windows VST3 plugin for Ableton Live 11. It records the MIDI that plays on its track,
 in Session or Arrangement View, and turns it into editable sheet music for piano, drum kit or
@@ -63,8 +63,9 @@ https://claude.ai/artifact/DKgFpy21eNeM8hECT8LyFT. This file is the working copy
 | `.github/workflows/build.yml` | windows-2022 runner, VS 2022 generator, pluginval v1.0.4 at strictness 5, uploads the `Transcriber-VST3` artifact. |
 | `scripts/install.ps1` | Downloads the latest successful build and copies it to the VST3 folder. Needs admin. |
 | `source/core/` | The capture core, **no JUCE dependency** (namespace `trs`): `CaptureEngine` (audio thread: state machine and lock-free ring), `CaptureModel` (records to notes, segments, bars, tempo; holds the reading), `Reading` (loop detection and the One loop / As played rules). |
+| `source/core/` (more) | `Notation.h` lists the pipeline: `Quantize.cpp` (clean-up, bars, pickup, quantising, tempo marks), `Rhythm.cpp` (lengths, ties, tuplets, beam groups), `Key.cpp`, `Spelling.cpp` (PS13), `Voices.cpp` (hands and voices), `Transcribe.cpp` (builds the Score, `dumpScore`). |
 | `source/` | Plugin glue: `CaptureService` (drain thread, versions, saved state, UI data), `StateCodec` (header, checksum and gzip of the saved state), `MidiCompare` (the MIDI-file comparison), `DiagnosticLog` (JSONL log, **off unless switched on in the page**), processor, WebView2 editor. |
-| `tests/core/` | Unit tests for the core: `test_main.cpp` (capture), `test_score.cpp` (JSON, score, undo, versions, documents), `SimHost.h` (a simulated Live: blocks, loop-split blocks, bar lines, tempo lag, stop flush) and `TestSupport.h` (CHECK macros). Run by CI with ctest; run locally with g++ (see Build loop). |
+| `tests/core/` | Unit tests for the core: `test_main.cpp` (capture), `test_score.cpp` (JSON, score, undo, versions, documents), `test_transcribe.cpp` (the transcription pipeline), `MidiReader.h` (reads the fixture `.mid` files), `SimHost.h` (a simulated Live: blocks, loop-split blocks, bar lines, tempo lag, stop flush) and `TestSupport.h` (CHECK macros). Run by CI with ctest; run locally with g++ (see Build loop). |
 | `tests/juce/` | `state_tests.cpp`: tests that need JUCE (the state codec and `CaptureService`, driven by the simulated Live). A second ctest target, built by CI only. |
 | `web/` | Bundled UI page (`index.html`, `app.js`, `style.css`) and three MEI test scores. |
 | `tests/fixtures/*.mid` | Test clips used in Phase 1 (format in §8). |
@@ -314,7 +315,7 @@ Full results are in `docs/phase1-results.md`.
 - `source/StateCodec.*`: what the host stores: header `TRSC`, container format, 0 = stored / 1 = gzip, JSON size and an FNV-1a checksum, then the JSON or its gzip. Anything else (empty, or the Phase 1 `TRS1` test state) is ignored without error.
 - `CaptureService`: each ended recording that holds notes becomes a version at once (an empty recording makes none, and the page says so). Reading edits and the MIDI-file comparison apply to the active version. **An unreadable saved state (damaged, or from a newer Transcriber) is kept byte for byte and written back until the user records something new**, with a message in the page. The state size is worked out at most once a second; the page warns at 5 MB.
 - Page: a Versions list next to the Capture panel (click to select, Rename, Duplicate, Delete with an in-page "Delete 'name'?" confirmation), the saved size, and load messages. The Phase 1 state-test panel and the Clear button are gone.
-- Not built yet: the Score is empty in every version until Phase 4 fills it, and there is no UI for editing it (Phase 7). The undo history is not saved.
+- Not built in Phase 3: there is no UI for editing the score (Phase 7), and the undo history is not saved. (Phase 4 fills the score.)
 
 **Original build list:**
 **Build:**
@@ -456,7 +457,6 @@ Tools in `tools/live/`. Copy them to the scratchpad or run them in place.
 
 ## 9. Status (update every session)
 
-- **Done:** Phases 0, 1, 2 and 3, all with their Live tests (docs/phase2-results.md, docs/phase3-results.md). Latest build 0.3.0, CI green (48 core tests, 8 JUCE tests, pluginval, no warnings in our code). Installed and tested in Live: 0.3.0. Small page fix after that (no versions -> "Nothing recorded yet.") is on main, not installed.
-- **Waiting on the user:** the Phase 4 test clips (about 10 reference clips with expected scores; see Phase 4 below). Nothing to install.
-- **Next:** Phase 4: transcription pipeline stages 1-7 as separate functions with unit tests, piano first; golden files (fixture MIDI -> expected score JSON). Then Phase 5 (MEI writer and the notation UI).
-- **Live test setup notes:** the Phase 2 meter markers were deleted from `test Project` (they changed the bars of Session clips); the set holds clips t21-t24 in track 7's slots 1-8 and a t23 drums clip in the Arrangement.
+- **Done:** Phases 0-3 with their Live tests. Phase 4 code: build 0.4.0, CI green (72 core tests, 9 JUCE tests, pluginval, no warnings in our code). Latest installed build in Live: 0.3.0.
+- **Waiting on the user:** (1) install 0.4.0 (admin PowerShell, Live closed, `scriptsinstall.ps1`) so the Phase 4 page can be checked in Live; (2) the reference clips: about 10 clips exported from Live (.mid) with the notation you expect (a photo or description is enough), to turn into golden tests. Until they arrive the golden tests are my own clips with scores I checked by hand.
+- **Next:** the Phase 4 Live check (`docs/phase4-tests.md`), then Phase 5: the MEI writer and the notation view (Verovio) so the score can be seen as sheet music, not text.
