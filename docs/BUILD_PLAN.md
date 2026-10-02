@@ -458,5 +458,5 @@ Tools in `tools/live/`. Copy them to the scratchpad or run them in place.
 ## 9. Status (update every session)
 
 - **Done:** Phases 0-3 with their Live tests. Phase 4 code: build 0.4.0, CI green (72 core tests, 9 JUCE tests, pluginval, no warnings in our code). Latest installed build in Live: 0.3.0.
-- **Waiting on the user:** (1) install 0.4.0 (admin PowerShell, Live closed, `scriptsinstall.ps1`) so the Phase 4 page can be checked in Live; (2) the reference clips: about 10 clips exported from Live (.mid) with the notation you expect (a photo or description is enough), to turn into golden tests. Until they arrive the golden tests are my own clips with scores I checked by hand.
+- **Waiting on the user:** (1) install 0.4.0 (admin PowerShell, Live closed, `scripts\install.ps1`) so the Phase 4 page can be checked in Live; (2) the reference clips: about 10 clips exported from Live (.mid) with the notation you expect (a photo or description is enough), to turn into golden tests. Until they arrive the golden tests are my own clips with scores I checked by hand.
 - **Next:** the Phase 4 Live check (`docs/phase4-tests.md`), then Phase 5: the MEI writer and the notation view (Verovio) so the score can be seen as sheet music, not text.
