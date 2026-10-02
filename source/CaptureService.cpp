@@ -86,7 +86,11 @@ void CaptureService::run()
 void CaptureService::drainNow()
 {
     const std::lock_guard<std::mutex> lock (mutex);
-    engine.drain ([this] (const trs::Record& r) { model.consume (r); });
+    engine.drain ([this] (const trs::Record& r)
+    {
+        model.consume (r);
+        addVersionIfRecordingEnded();
+    });
 
     const auto dropped = engine.getDroppedCount();
 
@@ -96,21 +100,26 @@ void CaptureService::drainNow()
         model.markIncomplete();
     }
 
-    // Every finished recording that holds notes becomes a version.
-    if (model.recordingsStopped() > handledStops)
-    {
-        handledStops = model.recordingsStopped();
-        lastStopWasEmpty = model.raw().notes.empty();
+}
 
-        if (! lastStopWasEmpty)
-        {
-            document.addVersion (model.raw(), model.reading(), model.detection(), juce::Time::currentTimeMillis());
+// Every finished recording that holds notes becomes a version. This runs after every record, so two
+// recordings that end within one pass of the drain loop each get their own.
+void CaptureService::addVersionIfRecordingEnded()
+{
+    if (model.recordingsStopped() <= handledStops)
+        return;
 
-            // The user has recorded something new: a state that could not be read is no longer protected.
-            unreadableState.reset();
-            loadMessage = {};
-        }
-    }
+    handledStops = model.recordingsStopped();
+    lastStopWasEmpty = model.raw().notes.empty();
+
+    if (lastStopWasEmpty)
+        return;
+
+    document.addVersion (model.raw(), model.reading(), model.detection(), juce::Time::currentTimeMillis());
+
+    // The user has recorded something new: a state that could not be read is no longer protected.
+    unreadableState.reset();
+    loadMessage = {};
 }
 
 //==============================================================================

@@ -55,6 +55,7 @@ public:
 private:
     void run() override;
     void drainNow();
+    void addVersionIfRecordingEnded();   // the mutex must be held
     void updateStateSize() const;
     uint64_t getRevisionLocked() const;   // the mutex must be held
 
