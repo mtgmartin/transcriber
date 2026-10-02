@@ -399,12 +399,15 @@ namespace
 
 int main()
 {
+    std::setvbuf (stdout, nullptr, _IONBF, 0);   // keep the output if a test crashes
     int failedTests = 0;
 
     for (const auto& t : tests)
     {
         const auto before = testing::failures;
         testing::currentTest = t.name;
+        std::printf ("RUN   %s
+", t.name);
         t.fn();
         testing::currentTest = "";
         const bool ok = testing::failures == before;
