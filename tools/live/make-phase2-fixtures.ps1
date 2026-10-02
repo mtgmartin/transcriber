@@ -72,3 +72,9 @@ if (Test-Path $live) {
   "Copied to $live"
 }
 Get-ChildItem $out -Filter "t2*.mid" | Select-Object Name, Length
+
+# 2 bars of 4/4 whose last note runs to the end of the clip (for the held-note-at-stop test).
+$held = @()
+foreach ($n in @(@(60, 0.0, 1.0, 100), @(64, 2.0, 1.0, 100), @(62, 4.0, 1.0, 100), @(67, 6.0, 2.0, 100))) { $held += , $n }
+Write-MidiFile (Join-Path $out "t24-held-note.mid") $held 8.0
+if (Test-Path $live) { Copy-Item (Join-Path $out "t24-held-note.mid") $live -Force }

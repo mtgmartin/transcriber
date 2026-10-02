@@ -123,6 +123,7 @@ namespace
 
         // Armed, but the transport is not running: nothing is recorded.
         rig.engine.requestArm();
+        CHECK (rig.engine.getPending() == CaptureEngine::Pending::arm);
         rig.host.drain();
         trs::HostBlock stopped;
         stopped.hasPpq = stopped.hasBpm = true;
@@ -130,6 +131,7 @@ namespace
         stopped.sampleRate = 48000.0;
         stopped.numSamples = 256;
         rig.engine.process (stopped, nullptr, 0);
+        CHECK (rig.engine.getPending() == CaptureEngine::Pending::none);
         CHECK (rig.engine.getState() == CaptureEngine::State::armed);
         const auto pendingWhileStopped = (int) rig.engine.drain ([] (const Record&) {});
         CHECK_EQ (pendingWhileStopped, 0);

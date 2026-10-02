@@ -1,6 +1,6 @@
 # Transcriber build plan
 
-Last updated 2026-10-01. **Current state: Phase 2 code complete and green in CI (build 0.2.0); Live tests (docs/phase2-tests.md) still to run. Next: finish Phase 2 in Live, then Phase 3.**
+Last updated 2026-10-01. **Current state: Phase 2 complete and tested in Live (build 0.2.0; results in docs/phase2-results.md). Next: Phase 3, the score model, versions and saving.**
 
 Transcriber is a Windows VST3 plugin for Ableton Live 11. It records the MIDI that plays on its track,
 in Session or Arrangement View, and turns it into editable sheet music for piano, drum kit or
@@ -261,7 +261,7 @@ Full results are in `docs/phase1-results.md`.
 - Drawn tempo automation envelopes.
 - Export Audio.
 
-### Phase 2: capture engine (CODE DONE, LIVE TESTS PENDING)
+### Phase 2: capture engine (DONE, gate passed 2026-10-02)
 **What was built (build 0.2.0, CI green, 27 unit tests):**
 - `CaptureEngine`: idle → armed → recording → stopped. Arm waits for the transport to play (or starts at once if it already does). Recording ends when Live stops or the user presses Stop. Only note-on/off and CC 120/123 are recorded. Records cross to the other thread in a lock-free ring (32768 records); overflow is counted and flagged on the capture.
 - `CaptureModel`: capture time = song time of the first block, then continuous. A jump of more than `0.05 + 2 blocks` quarter notes starts a new *segment*; it is a loop *wrap* if it goes backwards while the host's looping flag is on. Bar lines are the host's reported bar starts (a bar line before the latest one is ignored), the meter comes with each. The note-offs and CC 123 Live sends in the block where it stops are flagged, so the notes they end are known to be **held at stop**.
@@ -290,6 +290,8 @@ Full results are in `docs/phase1-results.md`.
   - meter changes
 - Keep the MIDI-file comparison tool.
 - Temporary UI: a note list or piano-roll preview.
+
+**Result:** all of the following passed in Live, see `docs/phase2-results.md`.
 
 **Done when:**
 - 3-minute piano and drum parts match their clips note for note in both views.
@@ -389,6 +391,10 @@ Tools in `tools/live/`. Copy them to the scratchpad or run them in place.
 | `input.ps1 "click x y; wait 300; key ctrl+s; type 120; drag x1 y1 x2 y2; slowdrag x1 y1 x2 y2 steps; scroll x y -5; rclick x y; dclick x y"` | SendInput mouse and keyboard. Synthetic keys arrive with an empty `KeyboardEvent.code`, but `key` is correct. |
 | `midi.ps1` → `Write-MidiFile path notes lengthBeats` | Notes are `@(pitch, startBeat, durBeats, velocity)`. Live names MIDI 60 as C3. |
 | `analyze-log.ps1 -Path <log.jsonl>` | Summarizes a plugin log: events, keys, transport, loop wraps, notes. |
+| `phase2-run.ps1 -Seconds N -Shot f.png` | Arrangement: clear, arm, play N seconds, stop, screenshot of the plugin window. |
+| `phase2-session.ps1 -SlotY y -Seconds N [-Launch2Y y2 -Launch2At s] [-TransportStop]` | Session: the same, launching the clip in the slot at screen y (clip sequences with a second launch). |
+| `compare-file.ps1`, `check.ps1 -Path f.mid -Shot f.png` | Click *Compare with MIDI file…*, paste the path in the file dialog, screenshot. |
+| `make-phase2-fixtures.ps1` | Writes the Phase 2 test clips (`t21`–`t24`) and copies them to the Live project. |
 
 **Method:**
 - **Test clips:** write `.mid` files into `test Project\Transcriber tests\`. They appear in Live's browser under *Current Project*, and you drag them into clip slots or the arrangement.
@@ -399,6 +405,10 @@ Tools in `tools/live/`. Copy them to the scratchpad or run them in place.
 - **Finding plugin windows:** locate them with Win32 `EnumWindows`/`GetWindowRect` (title `Transcriber/<track>`) rather than guessing coordinates.
   - The title bar is about 15 px below the window's top edge.
 - **Live behaviour to remember:**
+  - Phase 2 coordinates (2560x1440 monitor): the plugin window is resized tall (drag its corner down) so the Capture panel is fixed: Record (1292, 206), Clear (1478, 206), One loop (1314, 248), As played (1404, 248), Detect again (1692, 248). Transport Play (1114, 60), Stop (1136, 60). In Session View, track 7's slots are at x = 983, y = 121 + 17.5 per slot. These move if the layout changes; take a screenshot first.
+  - Live **does not call the plugin while the transport is stopped** (idle instrument), so a command from the page only reaches the audio thread at the next play.
+  - Space is awkward (the plugin window takes focus); click the transport buttons instead. The orange *Back to Arrangement* button (2215, 145) returns a track from Session clips to its Arrangement.
+  - `$input` is a reserved PowerShell variable; don't use it in scripts.
   - Live auto-hides plugin windows of unselected tracks.
   - Space stops the transport but **Session clips keep their playing state**. Use Stop All Clips, the master track's clip-stop button.
   - The global tempo field drag is extremely sensitive (it went to 999 BPM). Type values instead.
@@ -418,10 +428,6 @@ Tools in `tools/live/`. Copy them to the scratchpad or run them in place.
 
 ## 9. Status (update every session)
 
-- **Done:** Phases 0 and 1. Phase 2 code: build 0.2.0 (CI green, run 36927640929; 27 unit tests pass in CI and locally).
-  The unit tests cover everything in "Done when" except the Live parts.
-- **Waiting on the user:** install 0.2.0 with `scripts\install.ps1` from an admin PowerShell, with Live closed
-  (0.1.1 was never installed; 0.2.0 includes its fixes).
-- **Next:** run `docs/phase2-tests.md` in Live (test clips are in `test Project\Transcriber tests\` as `t21`–`t23`,
-  made by `tools/live/make-phase2-fixtures.ps1`), fix what it finds, record the results in `docs/phase2-results.md`,
-  then start Phase 3.
+- **Done:** Phases 0, 1 and 2. Phase 2 passed every item in Live (build 0.2.0; docs/phase2-results.md). Next build (UI fixes: Armed shown at once, Compare in the Capture panel, hint for long self-repeating clips) is on `main` once CI is green and is **not yet installed**.
+- **Waiting on the user:** install the latest build only if they want those UI fixes now (admin PowerShell, Live closed, `scriptsinstall.ps1`); Phase 3 does not depend on it.
+- **Next:** Phase 3: `Score` model with stable IDs and commands (undo/redo), versions (create on stop, list, rename, duplicate, delete), gzip state with schemaVersion and a size warning; round-trip unit tests; in Live record 3 takes, save, close, reopen.

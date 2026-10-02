@@ -107,8 +107,18 @@ uint64_t CaptureService::getRevision() const
 
 juce::var CaptureService::getStatus() const
 {
-    const auto state = engine.getState();
+    auto state = engine.getState();
+    const auto pending = engine.getPending();
     const std::lock_guard<std::mutex> lock (mutex);
+
+    // Show a command that the audio thread has not seen yet as if it had taken effect.
+    using Pending = trs::CaptureEngine::Pending;
+    using State = trs::CaptureEngine::State;
+
+    if (pending == Pending::arm && state != State::recording)
+        state = State::armed;
+    else if (pending == Pending::reset || (pending == Pending::stop && state == State::armed))
+        state = State::idle;
 
     const auto& raw = model.raw();
     const auto& reading = model.reading();

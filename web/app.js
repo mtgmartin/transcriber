@@ -50,6 +50,8 @@ function describeReading(s) {
     lines.push("One loop · " + s.loopBars + " bar" + (s.loopBars === 1 ? "" : "s") + " (" + sources[s.source] + ")");
     lines.push(s.passes + " pass" + (s.passes === 1 ? "" : "es") + " recorded; each pass replaces the one before it. " +
                "If you stopped partway, the end of the loop comes from the previous pass.");
+    if (s.source === "detected" && s.passes < 6)
+      lines.push("If this was a long clip that was played once and happens to repeat inside itself, press As played.");
   } else {
     lines.push("As played (" + sources[s.source] + ")");
     lines.push("Everything is written out in order, exactly as it was played.");

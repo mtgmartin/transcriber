@@ -29,6 +29,11 @@ public:
 
     State getState() const noexcept { return (State) state.load(); }
 
+    // A command waits here until the next audio block. Live may not run the plugin at all while
+    // the transport is stopped, so the UI uses this to show what is about to happen.
+    enum class Pending { none, arm, stop, reset };
+    Pending getPending() const noexcept { return (Pending) command.load(); }
+
     // Audio thread only.
     void process (const HostBlock&, const MidiEvent* events, int numEvents) noexcept;
 

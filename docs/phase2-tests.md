@@ -10,12 +10,13 @@ Test clips are in `test Project\Transcriber tests\` (made by `tools\live\make-ph
 |---|---|
 | `t21-loop1/2/4/8.mid` | 1, 2, 4 and 8 bars; every bar is different |
 | `t22-verse.mid`, `t22-chorus.mid` | 4 bars each, different notes |
+| `t24-held-note.mid` | 2 bars whose last note runs to the clip's end |
 | `t22-loop4-edited.mid` | `t21-loop4` with every note a semitone higher (stands in for an edited clip) |
 | `t23-piano-3min.mid`, `t23-drums-3min.mid` | 90 bars at 120 BPM, with triplets and ghost notes |
 
 Setup: tempo 120, 4/4. The plugin window shows the **Capture** panel; **Record** arms it. The
-**Test tools from Phase 1** section holds *Compare with MIDI file…* (compares the score notes, after the
-chosen reading, with a `.mid` file) and the **Write a diagnostic log** switch.
+**Compare with MIDI file…** (Capture panel; in 0.2.0 it is under *Test tools from Phase 1*) compares the score notes, after the
+chosen reading, with a `.mid` file. The **Write a diagnostic log** switch is under *Test tools from Phase 1*.
 
 ## 2.1 Record, play, stop (both views)
 

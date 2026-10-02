@@ -32,7 +32,12 @@
       <span>bars</span>
       <button id="redetect" type="button">Detect again</button>
     </div>
+    <div class="row">
+      <button id="compare" type="button">Compare with MIDI file…</button>
+      <span class="dim">Checks the score notes (after the reading above) against a <code>.mid</code> exported from the same clip.</span>
+    </div>
     <p id="reading-text" class="result">Nothing recorded yet.</p>
+    <pre id="compare-result" class="result">No comparison yet.</pre>
     <canvas id="roll" height="260"></canvas>
     <p id="roll-note" class="dim"></p>
   </section>
@@ -48,13 +53,6 @@
       <label><input type="checkbox" id="diagnostics"> Write a diagnostic log</label>
       <button id="open-log" type="button">Show log file</button>
     </div>
-  </section>
-
-  <section class="panel">
-    <h2>Timing vs. exported clip <span class="dim">(test 1.3)</span></h2>
-    <p>Record the clip, then choose the <code>.mid</code> file you exported from the same clip. The score notes (after the reading above) are compared with it.</p>
-    <div class="row"><button id="compare" type="button">Compare with MIDI file…</button></div>
-    <pre id="compare-result" class="result">No comparison yet.</pre>
   </section>
 
   <section class="panel">
