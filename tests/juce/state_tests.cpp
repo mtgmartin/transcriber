@@ -1,5 +1,4 @@
-            std::string out;
-            CHECK (statecodec::decode (bad.getData(), bad.getSize(), out) == statecodec::Decoded::damaged);// Tests that need JUCE: the compressed state format (StateCodec) and the CaptureService, which turns
+// Tests that need JUCE: the compressed state format (StateCodec) and the CaptureService, which turns
 // recordings into versions and saves and loads them. A simulated Live (tests/core/SimHost.h) plays
 // notes into the service's engine; the service's own thread does the rest, as in the plugin.
 
