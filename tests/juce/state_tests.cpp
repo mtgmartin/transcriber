@@ -428,6 +428,16 @@ namespace
         CHECK_EQ ((int) status.getProperty ("transcription", {}).getProperty ("keyTonic", -1), 7);
         CHECK_EQ ((int) status.getProperty ("transcription", {}).getProperty ("keyFifths", 99), 1);   // G major
 
+        // the key in one step: tonic * 2 + minor (A minor), and back to G major
+        service.setTranscriptionSetting ("key", 9 * 2 + 1);
+        status = service.getStatus();
+        CHECK_EQ ((int) status.getProperty ("settings", {}).getProperty ("keyTonic", -1), 9);
+        CHECK ((bool) status.getProperty ("settings", {}).getProperty ("keyMinor", false));
+        CHECK_EQ ((int) status.getProperty ("transcription", {}).getProperty ("keyFifths", 99), 0);
+        service.setTranscriptionSetting ("key", 7 * 2);
+        status = service.getStatus();
+        CHECK_EQ ((int) status.getProperty ("transcription", {}).getProperty ("keyFifths", 99), 1);
+
         // saved and loaded: the settings come back and the score is made again from the recording
         juce::MemoryBlock saved;
         service.saveState (saved);

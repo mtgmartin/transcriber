@@ -166,6 +166,12 @@ void CaptureService::setTranscriptionSetting (const juce::String& name, const ju
     else if (name == "autoPickup") s.autoPickup = (bool) value;
     else if (name == "keyTonic")   s.keyTonic = (int) value;
     else if (name == "keyMinor")   s.keyMinor = (bool) value;
+    else if (name == "key")        // tonic * 2 + minor in one step, or -1 to detect the key
+    {
+        const auto k = (int) value;
+        s.keyTonic = k < 0 ? -1 : k / 2;
+        s.keyMinor = k >= 0 && k % 2 == 1;
+    }
     else return;
 
     // Out-of-range values are brought back by the settings reader.

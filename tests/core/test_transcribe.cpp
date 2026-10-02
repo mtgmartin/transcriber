@@ -516,6 +516,9 @@ namespace
         CHECK_STR (spelled ({ 68, 70, 72, 73, 75, 77, 79, 80 }, 8, 0).c_str(), "Ab4 Bb4 C5 Db5 Eb5 F5 G5 Ab5");
         CHECK_STR (spelled ({ 61, 65, 68, 73 }, 1, 3).c_str(), "Db4 F4 Ab4 Db5");
 
+        // a tie between two spellings goes to the one with fewer sharps or flats (G, not F double sharp)
+        CHECK_STR (spelled ({ 61, 64, 67, 70 }, 1, 2).c_str(), "C#4 E4 G4 A#4");
+
         CHECK (spellPitches ({}, {}).empty());
         CHECK_EQ ((int) spellPitches ({ 0 }, { 60 }).size(), 1);
     }

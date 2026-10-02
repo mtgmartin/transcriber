@@ -1,6 +1,6 @@
 # Transcriber build plan
 
-Last updated 2026-10-02. **Current state: Phases 0-3 done and tested in Live. Phase 4 (piano transcription) is built and green in CI (build 0.4.0); its Live check (docs/phase4-tests.md) and the user's reference clips are still to come.**
+Last updated 2026-10-02. **Current state: Phases 0-3 done and tested in Live. Phase 4 (piano transcription) passed its Live check on build 0.4.0 (docs/phase4-results.md); build 0.4.1 with the three fixes from that check is pushed. The user's reference clips are still to come.**
 
 Transcriber is a Windows VST3 plugin for Ableton Live 11. It records the MIDI that plays on its track,
 in Session or Arrangement View, and turns it into editable sheet music for piano, drum kit or
@@ -457,6 +457,6 @@ Tools in `tools/live/`. Copy them to the scratchpad or run them in place.
 
 ## 9. Status (update every session)
 
-- **Done:** Phases 0-3 with their Live tests. Phase 4 code: build 0.4.0, CI green (72 core tests, 9 JUCE tests, pluginval, no warnings in our code). Latest installed build in Live: 0.3.0.
-- **Waiting on the user:** (1) install 0.4.0 (admin PowerShell, Live closed, `scripts\install.ps1`) so the Phase 4 page can be checked in Live; (2) the reference clips: about 10 clips exported from Live (.mid) with the notation you expect (a photo or description is enough), to turn into golden tests. Until they arrive the golden tests are my own clips with scores I checked by hand.
-- **Next:** the Phase 4 Live check (`docs/phase4-tests.md`), then Phase 5: the MEI writer and the notation view (Verovio) so the score can be seen as sheet music, not text.
+- **Done:** Phases 0-3 with their Live tests. Phase 4: code and Live check (build 0.4.0 installed in Live; results in `docs/phase4-results.md`). Build 0.4.1 fixes three things the check found (reading buttons disabled after reopening Live, G spelled F double sharp in C# minor, key setting sent twice).
+- **Waiting on the user:** (1) install 0.4.1 (admin PowerShell, Live closed, `scripts\install.ps1`); (2) the reference clips: about 10 clips exported from Live (.mid) with the notation you expect (a photo or description is enough), to turn into golden tests. Until they arrive the golden tests are my own clips with scores I checked by hand.
+- **Next:** Phase 5: the MEI writer and the notation view (Verovio) so the score can be seen as sheet music, not text. The reference clips (4.5) are compared with the score text in the same way once they arrive.

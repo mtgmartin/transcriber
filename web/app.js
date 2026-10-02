@@ -200,7 +200,8 @@ on("capture", function (s) {
   if (s.incomplete) summary.push("SOME DATA WAS LOST (" + s.dropped + " records dropped)");
   $("cap-summary").textContent = summary.join(" · ");
 
-  const hasCapture = s.state === "stopped";
+  // The reading of a take can be changed whenever the take is not being recorded (also after Live was reopened).
+  const hasCapture = s.state !== "recording" && s.state !== "armed" && s.rawNotes > 0;
   $("mode-loop").classList.toggle("active", s.mode === "oneLoop");
   $("mode-played").classList.toggle("active", s.mode === "asPlayed");
   $("mode-loop").disabled = $("mode-played").disabled = $("redetect").disabled = !hasCapture;
@@ -259,9 +260,8 @@ $("set-split").addEventListener("change", function (e) {
   if (v >= 21 && v <= 108) setSetting("splitPoint", v);
 });
 $("set-key").addEventListener("change", function (e) {
-  if (e.target.value === "auto") { setSetting("keyTonic", -1); return; }
-  setSetting("keyTonic", parseInt(e.target.value, 10));
-  setSetting("keyMinor", e.target.value.endsWith("m"));
+  if (e.target.value === "auto") { setSetting("key", -1); return; }
+  setSetting("key", parseInt(e.target.value, 10) * 2 + (e.target.value.endsWith("m") ? 1 : 0));
 });
 
 function showTranscription(s) {

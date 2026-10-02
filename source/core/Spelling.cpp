@@ -100,10 +100,12 @@ std::vector<SpelledPitch> spellPitches (const std::vector<int64_t>&, const std::
             strength[m] += window[(size_t) j][(size_t) t];
         }
 
+        // On a tie the class with the fewest sharps or flats wins (G, not F double sharp).
+        auto accidentals = [&] (int m) { return std::abs (mod (chroma[(size_t) j] - naturalChroma[m] + 6, 12) - 6); };
         int best = 0;
 
         for (int m = 1; m < 7; ++m)
-            if (strength[m] > strength[best])
+            if (strength[m] > strength[best] || (strength[m] == strength[best] && accidentals (m) < accidentals (best)))
                 best = m;
 
         morph[(size_t) j] = best;
