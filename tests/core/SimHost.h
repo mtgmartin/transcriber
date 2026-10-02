@@ -78,8 +78,9 @@ inline std::vector<Note> loopClip (const std::vector<Note>& clip, double clipLen
 class Host
 {
 public:
-    Host (trs::CaptureEngine& e, trs::CaptureModel& m, double rate = 48000.0, int block = 256)
-        : engine (e), model (m), sampleRate (rate), blockSize (block)
+    // drainIntoModel = false leaves the engine's records to someone else (a CaptureService thread).
+    Host (trs::CaptureEngine& e, trs::CaptureModel& m, double rate = 48000.0, int block = 256, bool drainIntoModel = true)
+        : engine (e), model (m), sampleRate (rate), blockSize (block), drainRecords (drainIntoModel)
     {
         meters.push_back ({ 0.0, 4, 4 });
     }
@@ -156,6 +157,9 @@ public:
 
     void drain()
     {
+        if (! drainRecords)
+            return;
+
         engine.drain ([this] (const trs::Record& r) { model.consume (r); });
     }
 
@@ -262,6 +266,7 @@ private:
     trs::CaptureModel& model;
     double sampleRate;
     int blockSize;
+    bool drainRecords;
 
     double ppq = 0.0, bpm = 120.0, totalBeats = 0.0;
     bool playing = false, loopOn = false;

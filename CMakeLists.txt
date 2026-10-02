@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.22)
 
-project(TRANSCRIBER VERSION 0.2.0)
+project(TRANSCRIBER VERSION 0.3.0)
 
 # Third-party code is downloaded at configure time (pinned, hash-checked) rather than
 # committed, to keep the repository and local checkout small.
@@ -36,7 +36,11 @@ juce_add_plugin(Transcriber
 set(TRANSCRIBER_CORE_SOURCES
     source/core/CaptureEngine.cpp
     source/core/CaptureModel.cpp
-    source/core/Reading.cpp)
+    source/core/Commands.cpp
+    source/core/Document.cpp
+    source/core/Json.cpp
+    source/core/Reading.cpp
+    source/core/Score.cpp)
 
 target_compile_features(Transcriber PRIVATE cxx_std_17)
 
@@ -47,6 +51,7 @@ target_sources(Transcriber
         source/MidiCompare.cpp
         source/PluginEditor.cpp
         source/PluginProcessor.cpp
+        source/StateCodec.cpp
         ${TRANSCRIBER_CORE_SOURCES})
 
 juce_add_binary_data(TranscriberWebData
@@ -81,6 +86,7 @@ enable_testing()
 
 add_executable(TranscriberCoreTests
     tests/core/test_main.cpp
+    tests/core/test_score.cpp
     ${TRANSCRIBER_CORE_SOURCES})
 
 target_include_directories(TranscriberCoreTests PRIVATE source tests/core)
@@ -93,3 +99,28 @@ else()
 endif()
 
 add_test(NAME CaptureCore COMMAND TranscriberCoreTests)
+
+# --- Tests that need JUCE: the compressed state format and the service that keeps the versions ---
+juce_add_console_app(TranscriberStateTests PRODUCT_NAME "TranscriberStateTests")
+
+target_sources(TranscriberStateTests
+    PRIVATE
+        tests/juce/state_tests.cpp
+        source/CaptureService.cpp
+        source/MidiCompare.cpp
+        source/StateCodec.cpp
+        ${TRANSCRIBER_CORE_SOURCES})
+
+target_include_directories(TranscriberStateTests PRIVATE source tests/core)
+target_compile_features(TranscriberStateTests PRIVATE cxx_std_17)
+target_compile_definitions(TranscriberStateTests PRIVATE JUCE_USE_CURL=0 JUCE_WEB_BROWSER=0)
+
+target_link_libraries(TranscriberStateTests
+    PRIVATE
+        juce::juce_audio_basics
+        juce::juce_core
+    PUBLIC
+        juce::juce_recommended_config_flags
+        juce::juce_recommended_warning_flags)
+
+add_test(NAME StateAndService COMMAND TranscriberStateTests)

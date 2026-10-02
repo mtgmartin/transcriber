@@ -213,64 +213,11 @@ juce::AudioProcessorEditor* TranscriberProcessor::createEditor()
 }
 
 //==============================================================================
-// State format for the Phase 1 test: "TRS1", megabytes, seed, then the test data.
-static constexpr juce::uint32 stateMagic = 0x31535254;   // "TRS1" little-endian
-
-void TranscriberProcessor::fillTestData (juce::MemoryBlock& block, size_t numBytes, juce::int64 seed)
-{
-    block.setSize (numBytes);
-    juce::Random random (seed);
-    auto* data = static_cast<juce::uint8*> (block.getData());
-
-    for (size_t i = 0; i < numBytes; ++i)
-        data[i] = (juce::uint8) random.nextInt (256);
-}
-
-void TranscriberProcessor::setStateTestSize (int megabytes)
-{
-    const std::lock_guard<std::mutex> lock (stateMutex);
-    stateTestMegabytes = juce::jlimit (0, 64, megabytes);
-    stateTestSeed = juce::Time::currentTimeMillis();
-    log.logEvent ("stateTestSize", stateTestMegabytes);
-}
-
-int TranscriberProcessor::getStateTestSize() const
-{
-    const std::lock_guard<std::mutex> lock (stateMutex);
-    return stateTestMegabytes;
-}
-
-juce::String TranscriberProcessor::getLastStateCheck() const
-{
-    const std::lock_guard<std::mutex> lock (stateMutex);
-    return lastStateCheck;
-}
-
+// The host keeps whatever these two functions produce: the versions, as compressed JSON (see StateCodec.h).
 void TranscriberProcessor::getStateInformation (juce::MemoryBlock& destData)
 {
     const auto start = juce::Time::getMillisecondCounterHiRes();
-
-    int megabytes;
-    juce::int64 seed;
-    {
-        const std::lock_guard<std::mutex> lock (stateMutex);
-        megabytes = stateTestMegabytes;
-        seed = stateTestSeed;
-    }
-
-    juce::MemoryOutputStream out (destData, false);
-    out.writeInt ((int) stateMagic);
-    out.writeInt (megabytes);
-    out.writeInt64 (seed);
-
-    if (megabytes > 0)
-    {
-        juce::MemoryBlock test;
-        fillTestData (test, (size_t) megabytes * 1024 * 1024, seed);
-        out.write (test.getData(), test.getSize());
-    }
-
-    out.flush();
+    capture.saveState (destData);
 
     auto* info = new juce::DynamicObject();
     info->setProperty ("bytes", (juce::int64) destData.getSize());
@@ -281,53 +228,12 @@ void TranscriberProcessor::getStateInformation (juce::MemoryBlock& destData)
 void TranscriberProcessor::setStateInformation (const void* data, int sizeInBytes)
 {
     const auto start = juce::Time::getMillisecondCounterHiRes();
-    juce::MemoryInputStream in (data, (size_t) sizeInBytes, false);
-
-    juce::String check;
-    int megabytes = 0;
-    juce::int64 seed = 0;
-
-    if (sizeInBytes < 16 || (juce::uint32) in.readInt() != stateMagic)
-    {
-        check = "Restored state was not recognised (" + juce::String (sizeInBytes) + " bytes).";
-    }
-    else
-    {
-        megabytes = in.readInt();
-        seed = in.readInt64();
-        const auto expectedSize = (size_t) megabytes * 1024 * 1024;
-        const auto available = (size_t) in.getNumBytesRemaining();
-
-        if (available != expectedSize)
-        {
-            check = "FAILED: expected " + juce::String ((juce::int64) expectedSize) + " test bytes, got " + juce::String ((juce::int64) available) + ".";
-        }
-        else if (megabytes == 0)
-        {
-            check = "Restored OK (no test data).";
-        }
-        else
-        {
-            juce::MemoryBlock expected;
-            fillTestData (expected, expectedSize, seed);
-            const auto* actual = static_cast<const juce::uint8*> (data) + 16;
-            check = std::memcmp (expected.getData(), actual, expectedSize) == 0
-                        ? "Restored OK: " + juce::String (megabytes) + " MB of test data matches."
-                        : "FAILED: " + juce::String (megabytes) + " MB of test data does not match.";
-        }
-    }
-
-    {
-        const std::lock_guard<std::mutex> lock (stateMutex);
-        stateTestMegabytes = megabytes;
-        stateTestSeed = seed;
-        lastStateCheck = check;
-    }
+    capture.loadState (data, (size_t) juce::jmax (0, sizeInBytes));
 
     auto* info = new juce::DynamicObject();
     info->setProperty ("bytes", sizeInBytes);
     info->setProperty ("ms", juce::Time::getMillisecondCounterHiRes() - start);
-    info->setProperty ("result", check);
+    info->setProperty ("versions", capture.getNumVersions());
     log.logEvent ("setState", juce::var (info));
 }
 

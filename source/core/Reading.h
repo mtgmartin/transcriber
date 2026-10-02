@@ -59,6 +59,13 @@ struct ResolvedCapture
 // As played: every pass is written out in order.
 ResolvedCapture resolve (const RawCapture&, const Reading&);
 
+// The user's choices, applied to a reading. They mark the reading as set by the user.
+// With no loop known yet, One loop starts with the first bar.
+Reading readingWithMode (const RawCapture&, Reading current, ReadingMode);
+Reading readingWithLoopBars (const RawCapture&, Reading current, int numBars);   // also switches to One loop
+Reading readingWithLoop (Reading current, double startPpq, double lengthPpq);    // also switches to One loop
+int loopBarsOf (const RawCapture&, const Reading&);
+
 // Length of numBars bars starting at startPpq, following the host's bar lines.
 double barsToPpq (const std::vector<BarStart>& bars, double startPpq, int numBars);
 

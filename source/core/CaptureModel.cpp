@@ -199,6 +199,7 @@ void CaptureModel::onStop (const Record& r)
     capture.stoppedByUser = (r.flags & Record::userStop) != 0;
     capture.stopPpq = std::max (ppq, capture.startPpq);
     capture.endPpq = capture.stopPpq;
+    ++stopCounter;
 
     redetect();
 }
@@ -210,55 +211,27 @@ void CaptureModel::redetect()
     ++revisionCounter;
 }
 
-void CaptureModel::ensureLoopDefaults()
-{
-    if (currentReading.loopLengthPpq > 0.0)
-        return;
-
-    // No loop was found: start with the first bar.
-    const auto& bars = capture.bars;
-    currentReading.loopStartPpq = bars.empty() ? capture.startPpq : bars.front().ppq;
-    currentReading.loopLengthPpq = barsToPpq (bars, currentReading.loopStartPpq, 1);
-}
-
 void CaptureModel::setMode (ReadingMode mode)
 {
-    currentReading.mode = mode;
-    currentReading.source = ReadingSource::user;
-
-    if (mode == ReadingMode::oneLoop)
-        ensureLoopDefaults();
-
+    currentReading = readingWithMode (capture, currentReading, mode);
     ++revisionCounter;
 }
 
 void CaptureModel::setLoopBars (int numBars)
 {
-    if (numBars < 1)
-        return;
-
-    ensureLoopDefaults();
-    currentReading.loopLengthPpq = barsToPpq (capture.bars, currentReading.loopStartPpq, numBars);
-    currentReading.mode = ReadingMode::oneLoop;
-    currentReading.source = ReadingSource::user;
+    currentReading = readingWithLoopBars (capture, currentReading, numBars);
     ++revisionCounter;
 }
 
 void CaptureModel::setLoop (double startPpq, double lengthPpq)
 {
-    if (lengthPpq <= 0.0)
-        return;
-
-    currentReading.loopStartPpq = startPpq;
-    currentReading.loopLengthPpq = lengthPpq;
-    currentReading.mode = ReadingMode::oneLoop;
-    currentReading.source = ReadingSource::user;
+    currentReading = readingWithLoop (currentReading, startPpq, lengthPpq);
     ++revisionCounter;
 }
 
 int CaptureModel::getLoopBars() const
 {
-    return ppqToBars (capture.bars, currentReading.loopStartPpq, currentReading.loopLengthPpq);
+    return loopBarsOf (capture, currentReading);
 }
 
 const ResolvedCapture& CaptureModel::resolved() const

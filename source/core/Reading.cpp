@@ -436,6 +436,58 @@ Detection detectReading (const RawCapture& raw)
     return detectFromNotes (raw);
 }
 
+namespace
+{
+    void ensureLoopDefaults (const RawCapture& raw, Reading& r)
+    {
+        if (r.loopLengthPpq > 0.0)
+            return;
+
+        r.loopStartPpq = raw.bars.empty() ? raw.startPpq : raw.bars.front().ppq;
+        r.loopLengthPpq = barsToPpq (raw.bars, r.loopStartPpq, 1);
+    }
+}
+
+Reading readingWithMode (const RawCapture& raw, Reading r, ReadingMode mode)
+{
+    r.mode = mode;
+    r.source = ReadingSource::user;
+
+    if (mode == ReadingMode::oneLoop)
+        ensureLoopDefaults (raw, r);
+
+    return r;
+}
+
+Reading readingWithLoopBars (const RawCapture& raw, Reading r, int numBars)
+{
+    if (numBars < 1)
+        return r;
+
+    ensureLoopDefaults (raw, r);
+    r.loopLengthPpq = barsToPpq (raw.bars, r.loopStartPpq, numBars);
+    r.mode = ReadingMode::oneLoop;
+    r.source = ReadingSource::user;
+    return r;
+}
+
+Reading readingWithLoop (Reading r, double startPpq, double lengthPpq)
+{
+    if (lengthPpq <= 0.0)
+        return r;
+
+    r.loopStartPpq = startPpq;
+    r.loopLengthPpq = lengthPpq;
+    r.mode = ReadingMode::oneLoop;
+    r.source = ReadingSource::user;
+    return r;
+}
+
+int loopBarsOf (const RawCapture& raw, const Reading& r)
+{
+    return ppqToBars (raw.bars, r.loopStartPpq, r.loopLengthPpq);
+}
+
 ResolvedCapture resolve (const RawCapture& raw, const Reading& reading)
 {
     if (reading.mode == ReadingMode::oneLoop && reading.loopLengthPpq > 0.0)

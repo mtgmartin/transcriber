@@ -76,11 +76,6 @@ juce::WebBrowserComponent::Options TranscriberEditor::makeBrowserOptions()
         })
         .withEventListener ("capArm", [this] (juce::var)   { processor.getCapture().arm(); })
         .withEventListener ("capStop", [this] (juce::var)  { processor.getCapture().stop(); })
-        .withEventListener ("capClear", [this] (juce::var)
-        {
-            processor.getCapture().clear();
-            processor.getLog().logEvent ("captureCleared");
-        })
         .withEventListener ("capMode", [this] (juce::var data)
         {
             processor.getCapture().setMode (data.getProperty ("mode", {}).toString() == "oneLoop" ? trs::ReadingMode::oneLoop
@@ -97,10 +92,10 @@ juce::WebBrowserComponent::Options TranscriberEditor::makeBrowserOptions()
         })
         .withEventListener ("compareMidi", [this] (juce::var) { compareWithMidiFile(); })
         .withEventListener ("savePdf", [this] (juce::var data) { savePdf (data); })
-        .withEventListener ("stateTest", [this] (juce::var data)
-        {
-            processor.setStateTestSize ((int) data.getProperty ("megabytes", 0));
-        })
+        .withEventListener ("verSelect", [this] (juce::var data)    { processor.getCapture().selectVersion (data.getProperty ("id", {}).toString()); })
+        .withEventListener ("verRename", [this] (juce::var data)    { processor.getCapture().renameVersion (data.getProperty ("id", {}).toString(), data.getProperty ("name", {}).toString()); })
+        .withEventListener ("verDuplicate", [this] (juce::var data) { processor.getCapture().duplicateVersion (data.getProperty ("id", {}).toString()); })
+        .withEventListener ("verDelete", [this] (juce::var data)    { processor.getCapture().deleteVersion (data.getProperty ("id", {}).toString()); })
         .withEventListener ("openLogFolder", [this] (juce::var)
         {
             processor.getLog().getFile().revealToUser();
@@ -182,8 +177,6 @@ void TranscriberEditor::timerCallback()
     o->setProperty ("logFile", processor.getLog().isEnabled() ? processor.getLog().getFile().getFullPathName() : juce::String ("(diagnostic log is off)"));
     o->setProperty ("logLines", (juce::int64) processor.getLog().getLinesWritten());
     o->setProperty ("dropped", processor.getLog().getDroppedCount());
-    o->setProperty ("stateTestMB", processor.getStateTestSize());
-    o->setProperty ("stateCheck", processor.getLastStateCheck());
     o->setProperty ("scale", juce::Component::getApproximateScaleFactorForComponent (this));
 
     browser.emitEventIfBrowserIsVisible ("status", juce::var (o));

@@ -5,13 +5,16 @@
 #include "MidiCompare.h"
 #include "core/CaptureEngine.h"
 #include "core/CaptureModel.h"
+#include "core/Document.h"
 
 #include <algorithm>
 #include <mutex>
+#include <string>
 #include <vector>
 
-// Connects the audio thread's CaptureEngine to the CaptureModel: a background thread drains
-// the engine's ring, and the message thread reads the model through the same mutex.
+// Connects the audio thread's CaptureEngine to what the plugin keeps: a background thread
+// drains the engine's ring into the CaptureModel, every finished recording becomes a Version in
+// the Document, and the message thread reads and edits the Document through the same mutex.
 class CaptureService final : private juce::Thread
 {
 public:
@@ -24,13 +27,16 @@ public:
     void arm()  { engine.requestArm(); }
     void stop() { engine.requestStop(); }
 
-    // Forgets the capture.
-    void clear();
-
-    // The reading
+    // The reading of the version that is shown
     void setMode (trs::ReadingMode);
     void setLoopBars (int numBars);
     void redetect();
+
+    // Versions
+    void selectVersion (const juce::String& id);
+    void renameVersion (const juce::String& id, const juce::String& name);
+    void duplicateVersion (const juce::String& id);
+    void deleteVersion (const juce::String& id);
 
     // For the UI
     juce::var getStatus() const;
@@ -40,14 +46,34 @@ public:
     // The notes the score is built from, for the MIDI-file comparison.
     std::vector<CapturedNote> getResolvedNotes() const;
 
+    // Saved state (called by the host)
+    void saveState (juce::MemoryBlock&) const;
+    void loadState (const void* data, size_t size);
+
+    int getNumVersions() const;
+
 private:
     void run() override;
     void drainNow();
+    void updateStateSize() const;
+    uint64_t getRevisionLocked() const;   // the mutex must be held
 
     trs::CaptureEngine engine;
     mutable std::mutex mutex;
     trs::CaptureModel model;
+    trs::Document document;
     uint32_t lastDropped = 0;
+    uint64_t handledStops = 0;
+    bool lastStopWasEmpty = false;
+
+    // A saved state that could not be read (damaged, or from a newer Transcriber) is kept as it
+    // was and written back unchanged until the user records something new.
+    juce::MemoryBlock unreadableState;
+    juce::String loadMessage;
+
+    mutable uint64_t sizedRevision = ~(uint64_t) 0;
+    mutable double sizedAtMs = 0.0;
+    mutable size_t stateBytes = 0;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (CaptureService)
 };

@@ -55,14 +55,7 @@ public:
     DiagnosticLog::BlockInfo getLatestBlockInfo() const;
     double getSampleRateForDisplay() const noexcept { return currentSampleRate.load(); }
 
-    // Test 1.7: fills the saved state with this many megabytes of checkable data.
-    void setStateTestSize (int megabytes);
-    int getStateTestSize() const;
-    juce::String getLastStateCheck() const;
-
 private:
-    static void fillTestData (juce::MemoryBlock&, size_t numBytes, juce::int64 seed);
-
     void logHostInfo();
 
     CaptureService capture;
@@ -77,11 +70,6 @@ private:
 
     mutable juce::SpinLock latestLock;
     DiagnosticLog::BlockInfo latestInfo;
-
-    mutable std::mutex stateMutex;
-    int stateTestMegabytes = 0;
-    juce::int64 stateTestSeed = 0;
-    juce::String lastStateCheck { "No state has been restored in this session." };
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (TranscriberProcessor)
 };

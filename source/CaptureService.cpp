@@ -1,5 +1,7 @@
 #include "CaptureService.h"
 
+#include "StateCodec.h"
+
 namespace
 {
     const char* stateName (trs::CaptureEngine::State s)
@@ -35,6 +37,30 @@ namespace
 
     // The preview is only a picture; very long captures are cut off.
     constexpr size_t maxPreviewNotes = 20000;
+
+    // How often the size of the saved state is worked out again while the document changes.
+    constexpr double stateSizeIntervalMs = 1000.0;
+
+    void describe (juce::DynamicObject& o, const trs::RawCapture& raw, const trs::Reading& reading,
+                   const trs::Detection& detection, const trs::ResolvedCapture& resolved)
+    {
+        o.setProperty ("rawNotes", (int) raw.notes.size());
+        o.setProperty ("scoreNotes", (int) resolved.notes.size());
+        o.setProperty ("segments", (int) raw.segments.size());
+        o.setProperty ("bars", (int) raw.bars.size());
+        o.setProperty ("passes", resolved.numPasses);
+        o.setProperty ("startPpq", raw.startPpq);
+        o.setProperty ("endPpq", raw.endOfCapture());
+        o.setProperty ("stoppedByUser", raw.stoppedByUser);
+        o.setProperty ("incomplete", raw.incomplete);
+        o.setProperty ("mode", modeName (reading.mode));
+        o.setProperty ("source", sourceName (reading.source));
+        o.setProperty ("loopStartPpq", reading.loopStartPpq);
+        o.setProperty ("loopLengthPpq", reading.loopLengthPpq);
+        o.setProperty ("loopBars", reading.loopLengthPpq > 0.0 ? trs::loopBarsOf (raw, reading) : 0);
+        o.setProperty ("candidateBars", detection.candidateBars);
+        o.setProperty ("candidateMismatch", detection.candidateMismatch);
+    }
 }
 
 CaptureService::CaptureService()
@@ -69,40 +95,116 @@ void CaptureService::drainNow()
         lastDropped = dropped;
         model.markIncomplete();
     }
+
+    // Every finished recording that holds notes becomes a version.
+    if (model.recordingsStopped() > handledStops)
+    {
+        handledStops = model.recordingsStopped();
+        lastStopWasEmpty = model.raw().notes.empty();
+
+        if (! lastStopWasEmpty)
+        {
+            document.addVersion (model.raw(), model.reading(), model.detection(), juce::Time::currentTimeMillis());
+
+            // The user has recorded something new: a state that could not be read is no longer protected.
+            unreadableState.reset();
+            loadMessage = {};
+        }
+    }
 }
 
-void CaptureService::clear()
-{
-    engine.requestReset();
-
-    const std::lock_guard<std::mutex> lock (mutex);
-    model.clear();
-}
-
+//==============================================================================
 void CaptureService::setMode (trs::ReadingMode mode)
 {
     const std::lock_guard<std::mutex> lock (mutex);
-    model.setMode (mode);
+
+    if (auto* v = document.activeMutable())
+        v->setReading (trs::readingWithMode (v->capture, v->reading, mode));
 }
 
 void CaptureService::setLoopBars (int numBars)
 {
     const std::lock_guard<std::mutex> lock (mutex);
-    model.setLoopBars (numBars);
+
+    if (auto* v = document.activeMutable())
+        v->setReading (trs::readingWithLoopBars (v->capture, v->reading, numBars));
 }
 
 void CaptureService::redetect()
 {
     const std::lock_guard<std::mutex> lock (mutex);
 
-    if (model.raw().stopped)
-        model.redetect();
+    if (auto* v = document.activeMutable())
+    {
+        v->detection = trs::detectReading (v->capture);
+        v->setReading (v->detection.reading);
+    }
+}
+
+void CaptureService::selectVersion (const juce::String& id)
+{
+    const std::lock_guard<std::mutex> lock (mutex);
+    lastStopWasEmpty = false;
+    document.select (id.toStdString());
+}
+
+void CaptureService::renameVersion (const juce::String& id, const juce::String& name)
+{
+    const std::lock_guard<std::mutex> lock (mutex);
+    document.rename (id.toStdString(), name.trim().substring (0, 80).toStdString());
+}
+
+void CaptureService::duplicateVersion (const juce::String& id)
+{
+    const std::lock_guard<std::mutex> lock (mutex);
+    lastStopWasEmpty = false;
+    document.duplicate (id.toStdString(), juce::Time::currentTimeMillis());
+}
+
+void CaptureService::deleteVersion (const juce::String& id)
+{
+    const std::lock_guard<std::mutex> lock (mutex);
+    lastStopWasEmpty = false;
+    document.remove (id.toStdString());
+}
+
+int CaptureService::getNumVersions() const
+{
+    const std::lock_guard<std::mutex> lock (mutex);
+    return (int) document.versions().size();
+}
+
+//==============================================================================
+uint64_t CaptureService::getRevisionLocked() const
+{
+    // Only used to notice that something changed.
+    return model.revision() * 1000003ull + document.revision() * 7919ull + (uint64_t) engine.getState();
 }
 
 uint64_t CaptureService::getRevision() const
 {
     const std::lock_guard<std::mutex> lock (mutex);
-    return model.revision();
+    return getRevisionLocked();
+}
+
+void CaptureService::updateStateSize() const
+{
+    const auto revision = document.revision();
+    const auto now = juce::Time::getMillisecondCounterHiRes();
+
+    if (revision == sizedRevision || (sizedRevision != ~(uint64_t) 0 && now - sizedAtMs < stateSizeIntervalMs))
+        return;
+
+    juce::MemoryBlock block;
+
+    if (document.versions().empty() && unreadableState.getSize() > 0)
+        block = unreadableState;
+    else
+        statecodec::encode (document.toJson().dump(), block);
+
+    stateBytes = block.getSize();
+    sizedRevision = revision;
+    sizedAtMs = now;
 }
 
 juce::var CaptureService::getStatus() const
@@ -110,6 +212,9 @@ juce::var CaptureService::getStatus() const
     auto state = engine.getState();
     const auto pending = engine.getPending();
     const std::lock_guard<std::mutex> lock (mutex);
+    updateStateSize();
+
+    const auto live = state == trs::CaptureEngine::State::recording;
 
     // Show a command that the audio thread has not seen yet as if it had taken effect.
     using Pending = trs::CaptureEngine::Pending;
@@ -120,41 +225,57 @@ juce::var CaptureService::getStatus() const
     else if (pending == Pending::reset || (pending == Pending::stop && state == State::armed))
         state = State::idle;
 
-    const auto& raw = model.raw();
-    const auto& reading = model.reading();
-    const auto& detection = model.detection();
-    const auto& resolved = model.resolved();
-
     auto* o = new juce::DynamicObject();
     o->setProperty ("state", stateName (state));
-    o->setProperty ("revision", (juce::int64) model.revision());
-    o->setProperty ("rawNotes", (int) raw.notes.size());
-    o->setProperty ("scoreNotes", (int) resolved.notes.size());
-    o->setProperty ("segments", (int) raw.segments.size());
-    o->setProperty ("bars", (int) raw.bars.size());
-    o->setProperty ("passes", resolved.numPasses);
-    o->setProperty ("startPpq", raw.startPpq);
-    o->setProperty ("endPpq", raw.endOfCapture());
-    o->setProperty ("stoppedByUser", raw.stoppedByUser);
-    o->setProperty ("incomplete", raw.incomplete);
+    o->setProperty ("revision", (juce::int64) getRevisionLocked());
     o->setProperty ("dropped", (juce::int64) engine.getDroppedCount());
-    o->setProperty ("mode", modeName (reading.mode));
-    o->setProperty ("source", sourceName (reading.source));
-    o->setProperty ("loopStartPpq", reading.loopStartPpq);
-    o->setProperty ("loopLengthPpq", reading.loopLengthPpq);
-    o->setProperty ("loopBars", reading.loopLengthPpq > 0.0 ? model.getLoopBars() : 0);
-    o->setProperty ("candidateBars", detection.candidateBars);
-    o->setProperty ("candidateMismatch", detection.candidateMismatch);
+
+    const auto* v = document.active();
+
+    if (live)
+        describe (*o, model.raw(), model.reading(), model.detection(), model.resolved());
+    else if (v != nullptr)
+        describe (*o, v->capture, v->reading, v->detection, v->resolved());
+    else
+        describe (*o, trs::RawCapture {}, trs::Reading {}, trs::Detection {}, trs::ResolvedCapture {});
+
+    juce::Array<juce::var> versions;
+
+    for (const auto& ver : document.versions())
+    {
+        auto* e = new juce::DynamicObject();
+        e->setProperty ("id", juce::String (ver.id));
+        e->setProperty ("name", juce::String::fromUTF8 (ver.name.c_str()));
+        e->setProperty ("createdAt", (juce::int64) ver.createdAtMs);
+        e->setProperty ("notes", (int) ver.capture.notes.size());
+        e->setProperty ("beats", ver.capture.endOfCapture() - ver.capture.startPpq);
+        e->setProperty ("mode", modeName (ver.reading.mode));
+        e->setProperty ("loopBars", ver.reading.loopLengthPpq > 0.0 ? trs::loopBarsOf (ver.capture, ver.reading) : 0);
+        e->setProperty ("active", ver.id == document.activeId());
+        versions.add (juce::var (e));
+    }
+
+    o->setProperty ("versions", versions);
+    o->setProperty ("activeVersion", juce::String (document.activeId()));
+    o->setProperty ("stateBytes", (juce::int64) stateBytes);
+    o->setProperty ("stateWarnBytes", (juce::int64) statecodec::warnBytes);
+    o->setProperty ("stateTooBig", stateBytes >= statecodec::warnBytes);
+    o->setProperty ("loadMessage", loadMessage);
+    o->setProperty ("lastStopEmpty", lastStopWasEmpty);
     return juce::var (o);
 }
 
 juce::var CaptureService::getPreview() const
 {
+    const auto live = engine.getState() == trs::CaptureEngine::State::recording;
     const std::lock_guard<std::mutex> lock (mutex);
-    const auto& resolved = model.resolved();
+
+    trs::ResolvedCapture empty;
+    const auto* v = document.active();
+    const auto& resolved = live ? model.resolved() : (v != nullptr ? v->resolved() : empty);
 
     auto* o = new juce::DynamicObject();
-    o->setProperty ("revision", (juce::int64) model.revision());
+    o->setProperty ("revision", (juce::int64) getRevisionLocked());
     o->setProperty ("length", resolved.lengthPpq);
 
     juce::Array<juce::var> notes;
@@ -191,9 +312,82 @@ std::vector<CapturedNote> CaptureService::getResolvedNotes() const
 {
     const std::lock_guard<std::mutex> lock (mutex);
     std::vector<CapturedNote> out;
+    const auto* v = document.active();
 
-    for (const auto& n : model.resolved().notes)
+    if (v == nullptr)
+        return out;
+
+    for (const auto& n : v->resolved().notes)
         out.push_back ({ n.onPpq, n.offPpq, n.pitch, n.velocity, n.channel });
 
     return out;
+}
+
+//==============================================================================
+void CaptureService::saveState (juce::MemoryBlock& destination) const
+{
+    const std::lock_guard<std::mutex> lock (mutex);
+
+    // A state we could not read goes back exactly as it came, until something new is recorded.
+    if (document.versions().empty() && unreadableState.getSize() > 0)
+    {
+        destination = unreadableState;
+        return;
+    }
+
+    destination.reset();
+    statecodec::encode (document.toJson().dump(), destination);
+}
+
+void CaptureService::loadState (const void* data, size_t size)
+{
+    std::string json;
+    const auto decoded = statecodec::decode (data, size, json);
+
+    const std::lock_guard<std::mutex> lock (mutex);
+    document = trs::Document();
+    unreadableState.reset();
+    loadMessage = {};
+
+    auto keepUnreadable = [&] (const juce::String& why)
+    {
+        unreadableState.replaceAll (data, size);
+        loadMessage = why;
+    };
+
+    if (decoded == statecodec::Decoded::notOurs)
+    {
+        if (size > 4)
+            loadMessage = "The saved state was written by an older test build and was ignored.";
+
+        return;
+    }
+
+    if (decoded == statecodec::Decoded::damaged)
+    {
+        keepUnreadable ("The saved state is damaged and could not be loaded. It is kept unchanged until you record something new.");
+        return;
+    }
+
+    trs::Json parsed;
+    std::string error;
+
+    if (! trs::Json::parse (json, parsed, &error))
+    {
+        keepUnreadable ("The saved state could not be read (" + juce::String (error) + "). It is kept unchanged until you record something new.");
+        return;
+    }
+
+    trs::Document loaded;
+    const auto result = trs::Document::fromJson (parsed, loaded, &error);
+
+    if (result == trs::LoadResult::ok)
+    {
+        document = std::move (loaded);
+        return;
+    }
+
+    keepUnreadable (result == trs::LoadResult::tooNew
+                        ? juce::String ("The saved state was written by a newer version of Transcriber. It is kept unchanged until you record something new.")
+                        : "The saved state could not be loaded (" + juce::String (error) + "). It is kept unchanged until you record something new.");
 }

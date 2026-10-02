@@ -13,14 +13,14 @@
 </header>
 
 <main>
-  <section class="panel wide" id="capture-panel">
+  <div class="split">
+  <section class="panel" id="capture-panel">
     <h2>Capture</h2>
     <p class="dim">Press Record, then play the clip (or press play in Live). Recording ends when Live stops, or when you press Stop here.
        The transport can already be running.</p>
     <div class="row">
       <button id="rec" type="button">Record</button>
       <span id="cap-state" class="pill">Idle</span>
-      <button id="cap-clear" type="button">Clear</button>
       <span class="dim" id="cap-summary"></span>
     </div>
     <div class="row">
@@ -42,6 +42,15 @@
     <p id="roll-note" class="dim"></p>
   </section>
 
+  <section class="panel" id="versions-panel">
+    <h2>Versions <span class="dim" id="ver-count"></span></h2>
+    <p id="ver-empty" class="dim">Every recording is kept here as a version, with its own reading and score. Old versions are never changed by a new recording.</p>
+    <ul id="ver-list"></ul>
+    <p id="state-size" class="dim"></p>
+    <p id="load-message" class="result bad"></p>
+  </section>
+  </div>
+
   <section class="panel wide">
     <details id="phase1-tools">
       <summary>Test tools from Phase 1</summary>
@@ -53,15 +62,6 @@
       <label><input type="checkbox" id="diagnostics"> Write a diagnostic log</label>
       <button id="open-log" type="button">Show log file</button>
     </div>
-  </section>
-
-  <section class="panel">
-    <h2>Saved state <span class="dim">(test 1.7)</span></h2>
-    <div class="row">
-      <button id="state-5" type="button">Use 5 MB test state</button>
-      <button id="state-0" type="button">Use empty state</button>
-    </div>
-    <p id="state-status" class="result">—</p>
   </section>
 
   <section class="panel">

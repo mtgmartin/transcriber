@@ -2,32 +2,15 @@
 // engine the way Live does (see tests/core/SimHost.h).
 
 #include "SimHost.h"
+#include "TestSupport.h"
 
 #include <cstdio>
 #include <cstring>
 #include <string>
 
-namespace
-{
-    int failures = 0;
-    int checks = 0;
-    const char* currentTest = "";
-
-    void report (bool ok, const char* file, int line, const std::string& what)
-    {
-        ++checks;
-
-        if (! ok)
-        {
-            ++failures;
-            std::printf ("  FAIL [%s] %s:%d  %s\n", currentTest, file, line, what.c_str());
-        }
-    }
-}
-
-#define CHECK(cond) report ((cond), __FILE__, __LINE__, #cond)
-#define CHECK_EQ(a, b) report ((a) == (b), __FILE__, __LINE__, std::string (#a " == " #b "  (") + std::to_string (a) + " vs " + std::to_string (b) + ")")
-#define CHECK_NEAR(a, b, tol) report (std::abs ((a) - (b)) <= (tol), __FILE__, __LINE__, std::string (#a " ~= " #b "  (") + std::to_string (a) + " vs " + std::to_string (b) + ")")
+using testing::currentTest;
+using testing::failures;
+using testing::checks;
 
 using namespace trs;
 
@@ -789,9 +772,7 @@ namespace
     }
 
     //==========================================================================
-    struct TestCase { const char* name; void (*fn)(); };
-
-    const TestCase tests[] = {
+    const testing::TestCase tests[] = {
         { "engine states", testEngineStates },
         { "basic capture", testBasicCapture },
         { "note held at stop", testHeldNoteAtStop },
@@ -825,8 +806,10 @@ namespace
 int main()
 {
     int failedTests = 0;
+    std::vector<testing::TestCase> all (std::begin (tests), std::end (tests));
+    all.insert (all.end(), testing::registry().begin(), testing::registry().end());
 
-    for (const auto& t : tests)
+    for (const auto& t : all)
     {
         const auto before = failures;
         currentTest = t.name;
@@ -837,6 +820,6 @@ int main()
         std::printf ("%s  %s\n", ok ? "PASS" : "FAIL", t.name);
     }
 
-    std::printf ("\n%d checks, %d failed; %d of %d tests failed\n", checks, failures, failedTests, (int) (sizeof tests / sizeof tests[0]));
+    std::printf ("\n%d checks, %d failed; %d of %d tests failed\n", checks, failures, failedTests, (int) all.size());
     return failures == 0 ? 0 : 1;
 }

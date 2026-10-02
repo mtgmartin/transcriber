@@ -45,6 +45,11 @@ function describeReading(s) {
 
   const sources = { host: "from the host's loop", detected: "detected from the notes", user: "set by you", none: "" };
   const lines = [];
+  if (s.state === "stopped" && s.lastStopEmpty) {
+    const message = "Nothing was recorded (no notes were played), so no version was made.";
+    if (!s.versions.length) return message;
+    lines.push(message);
+  }
 
   if (s.mode === "oneLoop") {
     lines.push("One loop · " + s.loopBars + " bar" + (s.loopBars === 1 ? "" : "s") + " (" + sources[s.source] + ")");
@@ -63,8 +68,113 @@ function describeReading(s) {
   return lines.join("\n");
 }
 
+// ---- Versions ------------------------------------------------------------------------
+let renamingId = null;      // the version whose name is being edited
+let confirmingId = null;    // the version waiting for "Delete?" to be confirmed
+let lastVersionsKey = "";
+
+function formatSize(bytes) {
+  if (bytes >= 1048576) return (bytes / 1048576).toFixed(2) + " MB";
+  if (bytes >= 1024) return (bytes / 1024).toFixed(1) + " KB";
+  return bytes + " bytes";
+}
+
+function versionMeta(v) {
+  const when = new Date(v.createdAt).toLocaleString([], { dateStyle: "short", timeStyle: "short" });
+  const reading = v.mode === "oneLoop" ? "One loop · " + v.loopBars + " bar" + (v.loopBars === 1 ? "" : "s") : "As played";
+  return when + " · " + v.notes + " notes · " + reading;
+}
+
+function renderVersions(s) {
+  const key = JSON.stringify([s.versions, s.activeVersion, renamingId, confirmingId, s.stateBytes, s.stateTooBig, s.loadMessage]);
+  if (key === lastVersionsKey) return;   // nothing changed: keep the rename box and its focus
+  lastVersionsKey = key;
+
+  const list = $("ver-list");
+  list.textContent = "";
+  $("ver-count").textContent = s.versions.length ? "(" + s.versions.length + ")" : "";
+  $("ver-empty").style.display = s.versions.length ? "none" : "";
+
+  s.versions.forEach(function (v) {
+    const li = document.createElement("li");
+    if (v.active) li.className = "active";
+    li.addEventListener("click", function (e) {
+      if (e.target.closest("button, input")) return;
+      if (!v.active) send("verSelect", { id: v.id });
+    });
+
+    if (renamingId === v.id) {
+      const input = document.createElement("input");
+      input.type = "text";
+      input.value = v.name;
+      input.maxLength = 80;
+      let done = false;
+      const finish = function (commit) {
+        if (done) return;
+        done = true;
+        renamingId = null;
+        if (commit && input.value.trim() && input.value.trim() !== v.name) send("verRename", { id: v.id, name: input.value.trim() });
+        lastVersionsKey = "";   // draw the list again
+      };
+      input.addEventListener("keydown", function (e) {
+        if (e.key === "Enter") finish(true);
+        else if (e.key === "Escape") finish(false);
+        e.stopPropagation();
+      });
+      input.addEventListener("blur", function () { finish(true); });
+      li.appendChild(input);
+      setTimeout(function () { input.focus(); input.select(); }, 0);
+    } else {
+      const name = document.createElement("div");
+      name.className = "ver-name";
+      name.textContent = v.name;
+      li.appendChild(name);
+    }
+
+    const meta = document.createElement("div");
+    meta.className = "ver-meta";
+    meta.textContent = versionMeta(v);
+    li.appendChild(meta);
+
+    const actions = document.createElement("div");
+    actions.className = "ver-actions";
+
+    function button(label, onClick, cls) {
+      const b = document.createElement("button");
+      b.type = "button";
+      b.textContent = label;
+      if (cls) b.className = cls;
+      b.addEventListener("click", function (e) { e.stopPropagation(); onClick(); });
+      actions.appendChild(b);
+    }
+
+    if (confirmingId === v.id) {
+      button("Delete \"" + v.name.slice(0, 18) + (v.name.length > 18 ? "…" : "") + "\"?", function () {
+        confirmingId = null;
+        send("verDelete", { id: v.id });
+      }, "danger");
+      button("Cancel", function () { confirmingId = null; lastVersionsKey = ""; });
+    } else {
+      button("Rename", function () { renamingId = v.id; lastVersionsKey = ""; });
+      button("Duplicate", function () { send("verDuplicate", { id: v.id }); });
+      button("Delete", function () { confirmingId = v.id; lastVersionsKey = ""; });
+    }
+
+    li.appendChild(actions);
+    list.appendChild(li);
+  });
+
+  const size = $("state-size");
+  size.className = s.stateTooBig ? "result bad" : "dim";
+  size.textContent = "Saved with the Live set: " + formatSize(s.stateBytes) + (s.stateTooBig
+    ? ". This is above " + formatSize(s.stateWarnBytes) + ": delete old versions you no longer need."
+    : " (the warning starts at " + formatSize(s.stateWarnBytes) + ")");
+  $("load-message").textContent = s.loadMessage || "";
+}
+
 on("capture", function (s) {
   capStatus = s;
+  renderVersions(s);
 
   const pill = $("cap-state");
   pill.textContent = stateLabels[s.state] || s.state;
@@ -103,7 +213,6 @@ $("rec").addEventListener("click", function () {
   const state = capStatus ? capStatus.state : "idle";
   send(state === "recording" || state === "armed" ? "capStop" : "capArm");
 });
-$("cap-clear").addEventListener("click", function () { send("capClear"); });
 $("mode-loop").addEventListener("click", function () { send("capMode", { mode: "oneLoop" }); });
 $("mode-played").addEventListener("click", function () { send("capMode", { mode: "asPlayed" }); });
 $("redetect").addEventListener("click", function () { send("capRedetect"); });
@@ -219,9 +328,6 @@ on("status", function (s) {
     dd.textContent = formatValue(field[0], s[field[0]]);
     dl.append(dt, dd);
   });
-
-  $("state-status").textContent =
-    "Test data in state: " + s.stateTestMB + " MB\nLast restore: " + s.stateCheck;
 });
 
 $("diagnostics").addEventListener("change", function (e) { send("diagnostics", { enabled: e.target.checked }); });
@@ -256,10 +362,6 @@ on("compareResult", function (r) {
   out.className = "result " + (r.passed ? "ok" : "bad");
   out.textContent = lines.join("\n");
 });
-
-// ---- Saved state (test 1.7) -----------------------------------------------------
-$("state-5").addEventListener("click", function () { send("stateTest", { megabytes: 5 }); });
-$("state-0").addEventListener("click", function () { send("stateTest", { megabytes: 0 }); });
 
 // ---- Keyboard (test 1.4) ----------------------------------------------------------
 const keyLog = $("key-log");
