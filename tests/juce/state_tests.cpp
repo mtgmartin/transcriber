@@ -406,8 +406,7 @@ int main()
     {
         const auto before = testing::failures;
         testing::currentTest = t.name;
-        std::printf ("RUN   %s
-", t.name);
+        std::printf ("RUN   %s\n", t.name);
         t.fn();
         testing::currentTest = "";
         const bool ok = testing::failures == before;
