@@ -42,7 +42,7 @@ TranscriberEditor::TranscriberEditor (TranscriberProcessor& p)
 
     setResizable (true, true);
     setResizeLimits (640, 420, 2400, 1800);
-    setSize (1000, 720);
+    setSize (1100, 860);
 
     startTimerHz (5);
 }
@@ -95,6 +95,18 @@ juce::WebBrowserComponent::Options TranscriberEditor::makeBrowserOptions()
             processor.setDiagnosticsEnabled ((bool) data.getProperty ("enabled", false));
         })
         .withEventListener ("compareMidi", [this] (juce::var) { compareWithMidiFile(); })
+        .withEventListener ("needMei", [this] (juce::var)
+        {
+            browser.emitEventIfBrowserIsVisible ("mei", processor.getCapture().getMei());
+        })
+        .withEventListener ("nodeInfo", [this] (juce::var data)
+        {
+            const auto id = data.getProperty ("id", {}).toString();
+            auto* o = new juce::DynamicObject();
+            o->setProperty ("id", id);
+            o->setProperty ("text", processor.getCapture().describeScoreNode (id));
+            browser.emitEventIfBrowserIsVisible ("nodeInfo", juce::var (o));
+        })
         .withEventListener ("savePdf", [this] (juce::var data) { savePdf (data); })
         .withEventListener ("verSelect", [this] (juce::var data)    { processor.getCapture().selectVersion (data.getProperty ("id", {}).toString()); })
         .withEventListener ("verRename", [this] (juce::var data)    { processor.getCapture().renameVersion (data.getProperty ("id", {}).toString(), data.getProperty ("name", {}).toString()); })

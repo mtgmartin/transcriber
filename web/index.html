@@ -13,6 +13,24 @@
 </header>
 
 <main>
+  <section class="panel wide" id="notation-panel">
+    <div class="row notation-bar">
+      <h2>Score</h2>
+      <button id="view-pages" type="button" class="toggle" title="Pages like printed sheets">Pages</button>
+      <button id="view-scroll" type="button" class="toggle" title="One long page">Continuous</button>
+      <button id="zoom-out" type="button" title="Smaller notation">&minus;</button>
+      <span id="zoom-label" class="dim">100%</span>
+      <button id="zoom-in" type="button" title="Larger notation">+</button>
+      <button id="zoom-fit" type="button" title="Back to the normal size">100%</button>
+      <span class="dim" id="render-info"></span>
+    </div>
+    <div id="notation-view">
+      <p id="notation-empty" class="dim">No score yet. Record something: the score appears here when the recording stops.</p>
+      <div id="notation-pages"></div>
+    </div>
+    <p id="selection-info" class="dim">Click a note or a rest to see what it is.</p>
+  </section>
+
   <div class="split">
   <section class="panel" id="capture-panel">
     <h2>Capture</h2>
@@ -111,5 +129,6 @@
 <script src="jspdf.umd.min.js"></script>
 <script src="svg2pdf.umd.min.js"></script>
 <script src="app.js"></script>
+<script src="score.js"></script>
 </body>
 </html>

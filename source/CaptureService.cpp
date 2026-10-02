@@ -1,6 +1,7 @@
 #include "CaptureService.h"
 
 #include "StateCodec.h"
+#include "core/Mei.h"
 
 namespace
 {
@@ -341,6 +342,7 @@ juce::var CaptureService::getStatus() const
         }
 
         o->setProperty ("scoreText", juce::String::fromUTF8 (scoreTextCache.c_str()));
+        o->setProperty ("scoreKey", juce::String (key));
     }
 
     o->setProperty ("versions", versions);
@@ -351,6 +353,45 @@ juce::var CaptureService::getStatus() const
     o->setProperty ("loadMessage", loadMessage);
     o->setProperty ("lastStopEmpty", lastStopWasEmpty);
     return juce::var (o);
+}
+
+juce::var CaptureService::getMei() const
+{
+    const std::lock_guard<std::mutex> lock (mutex);
+    const auto* v = document.active();
+    auto* o = new juce::DynamicObject();
+
+    if (v == nullptr || v->score.root().children.empty())
+    {
+        o->setProperty ("key", juce::String());
+        o->setProperty ("mei", juce::String());
+        return juce::var (o);
+    }
+
+    const auto key = v->id + "#" + std::to_string (v->revision());
+
+    if (key != meiKey)
+    {
+        trs::MeiOptions options;
+        options.title = v->name;
+        meiCache = trs::scoreToMei (v->score, options);
+        meiKey = key;
+    }
+
+    o->setProperty ("key", juce::String (key));
+    o->setProperty ("mei", juce::String::fromUTF8 (meiCache.c_str()));
+    return juce::var (o);
+}
+
+juce::String CaptureService::describeScoreNode (const juce::String& id) const
+{
+    const std::lock_guard<std::mutex> lock (mutex);
+    const auto* v = document.active();
+
+    if (v == nullptr)
+        return {};
+
+    return juce::String::fromUTF8 (trs::describeNode (v->score, id.toStdString()).c_str());
 }
 
 juce::var CaptureService::getPreview() const

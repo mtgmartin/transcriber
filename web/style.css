@@ -60,3 +60,15 @@ details .inner { display: grid; grid-template-columns: repeat(auto-fit, minmax(3
 .result.warn { color: #f0c36f; }
 select:disabled, input:disabled { opacity: 0.5; }
 #score-text { max-height: 360px; }
+
+#notation-view { background: #c9ced8; border-radius: 4px; height: 460px; min-height: 160px; overflow: auto; resize: vertical; padding: 10px 0; }
+#notation-view > p { padding: 12px 16px; margin: 0; color: #2a3140; }
+#notation-pages .sheet { background: #fff; margin: 0 auto 12px; width: fit-content; min-width: 100px; box-shadow: 0 1px 4px rgba(0, 0, 0, 0.35); }
+#notation-pages.scroll .sheet { margin-bottom: 0; }
+#notation-pages svg { display: block; }
+#notation-pages g.note, #notation-pages g.rest, #notation-pages g.mRest, #notation-pages g.chord { cursor: pointer; }
+#notation-pages .selected, #notation-pages .selected * { fill: #d6342a; stroke: #d6342a; }
+.notation-bar h2 { margin: 0 8px 0 0; }
+#selection-info { margin: 8px 0 0; min-height: 1.5em; }
+#zoom-out, #zoom-in { min-width: 32px; }
+#notation-pages.scroll .sheet { margin: 0 auto; box-shadow: none; }

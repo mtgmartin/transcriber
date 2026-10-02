@@ -40,6 +40,7 @@ set(TRANSCRIBER_CORE_SOURCES
     source/core/Document.cpp
     source/core/Json.cpp
     source/core/Key.cpp
+    source/core/Mei.cpp
     source/core/Quantize.cpp
     source/core/Reading.cpp
     source/core/Rhythm.cpp
@@ -64,6 +65,7 @@ juce_add_binary_data(TranscriberWebData
     SOURCES
         web/index.html
         web/app.js
+        web/score.js
         web/style.css
         web/piano.mei
         web/drums.mei
@@ -92,6 +94,7 @@ enable_testing()
 
 add_executable(TranscriberCoreTests
     tests/core/test_main.cpp
+    tests/core/test_mei.cpp
     tests/core/test_score.cpp
     tests/core/test_transcribe.cpp
     ${TRANSCRIBER_CORE_SOURCES})

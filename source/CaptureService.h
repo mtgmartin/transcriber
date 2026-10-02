@@ -45,6 +45,13 @@ public:
     // For the UI
     juce::var getStatus() const;
     juce::var getPreview() const;
+
+    // The score of the version that is shown, as MEI for the engraving library: { key, mei } (mei is
+    // empty when there is no score). The key changes whenever the score does.
+    juce::var getMei() const;
+
+    // What a click on a note, rest or chord of the engraved score should say.
+    juce::String describeScoreNode (const juce::String& id) const;
     uint64_t getRevision() const;
 
     // The notes the score is built from, for the MIDI-file comparison.
@@ -78,6 +85,7 @@ private:
 
     // The score as text for the page, worked out again only when the version changes.
     mutable std::string scoreTextKey, scoreTextCache;
+    mutable std::string meiKey, meiCache;
 
     mutable uint64_t sizedRevision = ~(uint64_t) 0;
     mutable double sizedAtMs = 0.0;

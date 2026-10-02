@@ -17,6 +17,7 @@ in 0.4.1.
 | 4.3 Key | **Pass** | Eb major: "Eb major (3 flats), set by you", spelling follows (flats). |
 | 4.3 Pickup bar, reading switch | **Not run in Live** | Covered by the unit tests (pickup, One loop / As played regeneration). The reading switch could not be tried after the restart because of finding 1. |
 | 4.4 Save, close, reopen | **Pass** | Ctrl+S, Live quit and started again: 7 versions, the take's settings (Grid 1/8, Triplets off, split 72, Eb major, pickup on) and the warning line were back, the score text is the same as before (checked bars 16–18). State size 22.5 KB for 7 takes with 1207 and 819 notes. |
+| 0.4.1 re-check | **Pass** | Installed 0.4.1: after reopening Live "As played" and "One loop" work on a saved take (Take 9: 10 measures as played, 4 as a loop); choosing G major sets key once ("G major (1 sharp), set by you"); with the key detected again the G of bar 3 is written `G4!` (natural) not F double sharp. |
 | 4.5 Reference clips | **Waiting** | |
 
 ## Findings
