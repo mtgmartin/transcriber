@@ -1,6 +1,6 @@
 # Transcriber build plan
 
-Last updated 2026-10-02. **Current state: Phases 0-3 done and tested in Live. Phase 4 (piano transcription) passed its Live check on build 0.4.0 (docs/phase4-results.md); build 0.4.1 with the three fixes from that check is pushed. The user's reference clips are still to come.**
+Last updated 2026-10-02. **Current state: Phases 0-4 done and tested in Live. Phase 5 (sheet-music view) is built and green in CI (build 0.5.0); its Live check (docs/phase5-tests.md) and the user's reference clips are still to come.**
 
 Transcriber is a Windows VST3 plugin for Ableton Live 11. It records the MIDI that plays on its track,
 in Session or Arrangement View, and turns it into editable sheet music for piano, drum kit or
@@ -353,6 +353,15 @@ Full results are in `docs/phase1-results.md`.
 **Done when:** grid-quantized clips come out 100% correct, and key and spelling are correct or the errors are listed and accepted.
 
 ### Phase 5: rendering and UI shell
+**What was built (build 0.5.0, 80 core tests, ~19000 checks):**
+- `source/core/Mei.h/.cpp`: `scoreToMei(Score, options)` writes MEI 5.1 (grand staff, key and meter, meter changes as section-level `scoreDef`, pickup as measure 0 with `metcon="false"`, ties as `@tie`, `<tuplet>`/`<beam>` nested by extent, chords, `mRest`, tempo marks with a quarter-note symbol). Every node id is the `xml:id`. `describeNode(Score, id)` gives the sentence shown when a note is clicked.
+- `CaptureService::getMei()` (cached by version id + revision) and `describeScoreNode()`; the capture status carries `scoreKey`. Page events: `needMei` -> `mei {key, mei}`, `nodeInfo {id}` -> `nodeInfo {id, text}`.
+- `web/score.js` + the *Score* panel at the top of the page: Verovio engraves the MEI; *Pages* (A4 proportions) and *Continuous* (no gaps) views, zoom 50-200 %, lines re-broken when the window is resized, click to select (red; a note in a chord selects the chord), view and zoom remembered in `localStorage`. Verovio lays out the whole score on load (about 0.45 s for 200 bars, measured in the browser pane); the pages are drawn only when they come near the visible area. The score of the shown version stays on screen while recording.
+- Window default size 1100x860.
+- Tests: `tests/core/test_mei.cpp` (well-formed XML, unique ids that all exist in the score, one element per note/rest, measure count, ties, tuplets, meter changes, pickup, escaping, click sentences, the fixture clips and 40 random clips). Looking at the engraving: `build/vero/` (scratch, gitignored) has a Verovio copy, a tiny web server (`serve.ps1`, started with `.claude/launch.json`) and `mkpage.sh`, which copies the real page with a stub for the plugin bridge.
+- Not done yet from the original list: the toolbar's version picker and profile choice (the Versions panel and the Notation row already do this; profiles come with Phase 6).
+
+**Original build list:**
 **Build:**
 - MEI 5 writer.
 - Bundled UI with page and continuous views, zoom, and click-to-select through `xml:id`.
@@ -457,6 +466,6 @@ Tools in `tools/live/`. Copy them to the scratchpad or run them in place.
 
 ## 9. Status (update every session)
 
-- **Done:** Phases 0-3 with their Live tests. Phase 4: code and Live check (build 0.4.0 installed in Live; results in `docs/phase4-results.md`). Build 0.4.1 fixes three things the check found (reading buttons disabled after reopening Live, G spelled F double sharp in C# minor, key setting sent twice).
-- **Waiting on the user:** (1) install 0.4.1 (admin PowerShell, Live closed, `scripts\install.ps1`); (2) the reference clips: about 10 clips exported from Live (.mid) with the notation you expect (a photo or description is enough), to turn into golden tests. Until they arrive the golden tests are my own clips with scores I checked by hand.
-- **Next:** Phase 5: the MEI writer and the notation view (Verovio) so the score can be seen as sheet music, not text. The reference clips (4.5) are compared with the score text in the same way once they arrive.
+- **Done:** Phases 0-4 with their Live tests (4: `docs/phase4-results.md`, build 0.4.1 verified in Live). Phase 5 code: build 0.5.0, CI green (80 core tests, JUCE tests, pluginval).
+- **Waiting on the user:** (1) install 0.5.0 (admin PowerShell, Live closed, `scripts\install.ps1`) so the Score panel can be checked in Live; (2) the reference clips: about 10 clips exported from Live (.mid) with the notation you expect (a photo or description is enough), to turn into golden tests.
+- **Next:** the Phase 5 Live check (`docs/phase5-tests.md`, then `docs/phase5-results.md`), then Phase 6: drums, guitar, bass and tab.
