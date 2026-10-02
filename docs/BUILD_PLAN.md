@@ -1,6 +1,6 @@
 # Transcriber build plan
 
-Last updated 2026-10-02. **Current state: Phases 0-4 done and tested in Live. Phase 5 (sheet-music view) is built and green in CI (build 0.5.0); its Live check (docs/phase5-tests.md) and the user's reference clips are still to come.**
+Last updated 2026-10-02. **Current state: Phases 0-5 done and tested in Live. Phase 6 (drums, guitar, bass) is next; the user's reference clips are still to come.**
 
 Transcriber is a Windows VST3 plugin for Ableton Live 11. It records the MIDI that plays on its track,
 in Session or Arrangement View, and turns it into editable sheet music for piano, drum kit or
@@ -466,6 +466,6 @@ Tools in `tools/live/`. Copy them to the scratchpad or run them in place.
 
 ## 9. Status (update every session)
 
-- **Done:** Phases 0-4 with their Live tests (4: `docs/phase4-results.md`, build 0.4.1 verified in Live). Phase 5 code: build 0.5.0, CI green (80 core tests, JUCE tests, pluginval).
-- **Waiting on the user:** (1) install 0.5.0 (admin PowerShell, Live closed, `scripts\install.ps1`) so the Score panel can be checked in Live; (2) the reference clips: about 10 clips exported from Live (.mid) with the notation you expect (a photo or description is enough), to turn into golden tests.
-- **Next:** the Phase 5 Live check (`docs/phase5-tests.md`, then `docs/phase5-results.md`), then Phase 6: drums, guitar, bass and tab.
+- **Done:** Phases 0-5 with their Live tests (5: `docs/phase5-results.md`, build 0.5.0 verified in Live; 0.5.1 has taller Continuous pieces, not yet seen in Live). 81 core tests.
+- **Waiting on the user:** the reference clips: about 10 clips exported from Live (.mid) with the notation you expect (a photo or description is enough), to turn into golden tests. Installing 0.5.1 is optional (small change).
+- **Next:** Phase 6: drum profile and map editor, guitar and bass profiles, tab algorithm.

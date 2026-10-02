@@ -49,7 +49,7 @@
                      spacingSystem: 14, justifyVertically: false };
     return settings.view === "pages"
       ? Object.assign(common, { pageHeight: Math.floor(pageWidth * 1.4142), adjustPageHeight: false })
-      : Object.assign(common, { pageHeight: Math.max(900, Math.floor(pageWidth * 0.6)), adjustPageHeight: false });
+      : Object.assign(common, { pageHeight: Math.max(900, Math.floor(pageWidth * 1.4)), adjustPageHeight: false });
   }
 
   let renderToken = 0;

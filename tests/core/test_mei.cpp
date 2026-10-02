@@ -293,6 +293,34 @@ namespace
         CHECK (describeNode (result.score, "no-such-id").empty());
     }
 
+    void testTripletAndTieDescriptions()
+    {
+        const auto result = transcribePiano (tsupport::capture ({ { p ("C5"), 3.0, 2.0 },
+                                                                  { p ("E5"), 5.0, 1.0 / 3.0 }, { p ("F5"), 5.0 + 1.0 / 3.0, 1.0 / 3.0 },
+                                                                  { p ("G5"), 5.0 + 2.0 / 3.0, 1.0 / 3.0 } }, 8.0), {});
+        bool triplet = false, tied = false;
+        std::vector<const Node*> stack { &result.score.root() };
+
+        while (! stack.empty())
+        {
+            const auto* n = stack.back();
+            stack.pop_back();
+
+            if (n->type == nodeType::note)
+            {
+                const auto text = describeNode (result.score, n->id);
+                triplet = triplet || text.find ("eighth triplet note") != std::string::npos;
+                tied = tied || text.find (", tied to the next note") != std::string::npos;
+            }
+
+            for (const auto& c : n->children)
+                stack.push_back (&c);
+        }
+
+        CHECK (triplet);
+        CHECK (tied);
+    }
+
     void testFixtureFilesGiveValidMei()
     {
 #ifdef TRANSCRIBER_FIXTURES_DIR
@@ -363,6 +391,7 @@ namespace
     REGISTER (testTiesTupletsBeamsAndRests, "mei: ties, tuplets, beams, chords and rests");
     REGISTER (testMetersAndPickup, "mei: meter changes and a pickup bar");
     REGISTER (testNodeDescriptions, "mei: what a click on the page says");
+    REGISTER (testTripletAndTieDescriptions, "mei: triplets and ties in the click sentence");
     REGISTER (testFixtureFilesGiveValidMei, "mei: the test clips give valid MEI");
     REGISTER (testRandomClipsGiveValidMei, "mei: 40 random clips give valid MEI");
     REGISTER (testXmlEscape, "mei: xml escaping");
