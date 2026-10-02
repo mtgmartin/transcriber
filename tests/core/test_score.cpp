@@ -113,7 +113,8 @@ namespace
     void testJsonUnicodeEscapes()
     {
         Json j;
-        CHECK (Json::parse (R"("\u010d\u00e9 \ud83c\udfb5 \n")", j));
+        // the escapes are written with a doubled backslash so that the compiler leaves them alone
+        CHECK (Json::parse ("\"\\u010d\\u00e9 \\ud83c\\udfb5 \\n\"", j));
         CHECK_STR (j.asString().c_str(), "\xc4\x8d\xc3\xa9 \xf0\x9f\x8e\xb5 \n");
     }
 

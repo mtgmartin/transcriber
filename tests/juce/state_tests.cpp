@@ -105,10 +105,7 @@ namespace
                 static_cast<juce::uint8*> (bad.getData())[at + i] ^= 0xff;
 
             std::string out;
-            const auto result = statecodec::decode (bad.getData(), bad.getSize(), out);
-
-            // either detected, or (if the damage fell on data the format cannot check) the text differs
-            CHECK (result == statecodec::Decoded::damaged || out != makeJson (400000));
+            CHECK (statecodec::decode (bad.getData(), bad.getSize(), out) == statecodec::Decoded::damaged);
         }
     }
 
