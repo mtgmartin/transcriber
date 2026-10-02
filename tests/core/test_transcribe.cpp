@@ -3,6 +3,7 @@
 #include "TestSupport.h"
 #include "TranscribeSupport.h"
 
+#include "MidiReader.h"
 #include "core/Notation.h"
 
 #include <random>
@@ -1022,6 +1023,87 @@ namespace
         CHECK_EQ ((int) result.score.revision(), 0);
     }
 
+    // Whatever is played: every voice fills its measure, the notes keep their total length per pitch,
+    // and every tie leads to a note of the same pitch.
+    void checkScoreAddsUp (const TranscriptionResult& result, const std::string& what)
+    {
+        const auto& part = result.score.root().children[0];
+
+        for (const auto& staff : part.children)
+        {
+            for (const auto& measure : staff.children)
+            {
+                for (const auto& layer : measure.children)
+                {
+                    if (layer.type != nodeType::layer)
+                        continue;
+
+                    int64_t sum = 0;
+
+                    for (const auto& e : layer.children)
+                        sum += e.prop ("ticks").asInt();
+
+                    testing::report (sum == measure.prop ("ticks").asInt(), __FILE__, __LINE__,
+                                     what + ": a voice does not fill its measure (" + std::to_string (sum) + " of "
+                                     + std::to_string (measure.prop ("ticks").asInt()) + ")");
+                }
+            }
+        }
+
+        std::map<int, int64_t> written, quantised;
+
+        for (const auto& q : result.notes)
+            quantised[q.pitch] += q.dur;
+
+        std::vector<const Node*> stack { &result.score.root() };
+
+        while (! stack.empty())
+        {
+            const auto* n = stack.back();
+            stack.pop_back();
+
+            if (n->type == nodeType::note)
+            {
+                written[(int) n->prop ("pitch").asInt()] += n->prop ("ticks").asInt();
+            }
+            else if (n->type == nodeType::chord)
+            {
+                for (const auto& c : n->children)
+                    written[(int) c.prop ("pitch").asInt()] += n->prop ("ticks").asInt();
+
+                continue;
+            }
+
+            for (const auto& c : n->children)
+                stack.push_back (&c);
+        }
+
+        testing::report (written == quantised, __FILE__, __LINE__, what + ": the notes changed length");
+
+        // ties: the beginnings and the ends of ties per pitch must match
+        std::map<int, int> opens, closes;
+        stack = { &result.score.root() };
+
+        while (! stack.empty())
+        {
+            const auto* n = stack.back();
+            stack.pop_back();
+
+            if (n->type == nodeType::note)
+            {
+                const auto tie = n->prop ("tie").asString();
+                const auto pitch = (int) n->prop ("pitch").asInt();
+                opens[pitch] += (tie == "i" || tie == "m") ? 1 : 0;
+                closes[pitch] += (tie == "t" || tie == "m") ? 1 : 0;
+            }
+
+            for (const auto& c : n->children)
+                stack.push_back (&c);
+        }
+
+        testing::report (opens == closes, __FILE__, __LINE__, what + ": ties do not match");
+    }
+
     // Random clips: whatever is played, the bars add up, the notes keep their length and ties match.
     void testRandomClipsKeepTheirTimeAndNotes()
     {
@@ -1067,65 +1149,50 @@ namespace
 
             testing::report (result.score.validate().empty(), __FILE__, __LINE__, "random clip: invalid score");
 
-            // 1. every voice of every measure adds up to the measure
-            const auto& part = result.score.root().children[0];
-
-            for (const auto& staff : part.children)
-            {
-                for (const auto& measure : staff.children)
-                {
-                    for (const auto& layer : measure.children)
-                    {
-                        if (layer.type != nodeType::layer)
-                            continue;
-
-                        int64_t sum = 0;
-
-                        for (const auto& e : layer.children)
-                            sum += e.prop ("ticks").asInt();
-
-                        testing::report (sum == measure.prop ("ticks").asInt(), __FILE__, __LINE__,
-                                         "random clip: a voice does not fill its measure (" + std::to_string (sum) + " of "
-                                         + std::to_string (measure.prop ("ticks").asInt()) + ")");
-                    }
-                }
-            }
-
-            // 2. the notes keep their total length per pitch
-            std::map<int, int64_t> written, quantised;
-
-            for (const auto& q : result.notes)
-                quantised[q.pitch] += q.dur;
-
-            std::vector<const Node*> stack { &result.score.root() };
-
-            while (! stack.empty())
-            {
-                const auto* n = stack.back();
-                stack.pop_back();
-
-                if (n->type == nodeType::note)
-                {
-                    // inside a chord the ticks are the chord's
-                    written[(int) n->prop ("pitch").asInt()] += n->prop ("ticks").asInt();
-                }
-                else if (n->type == nodeType::chord)
-                {
-                    for (const auto& c : n->children)
-                        written[(int) c.prop ("pitch").asInt()] += n->prop ("ticks").asInt();
-
-                    continue;
-                }
-
-                for (const auto& c : n->children)
-                    stack.push_back (&c);
-            }
-
-            testing::report (written == quantised, __FILE__, __LINE__, "random clip: the notes changed length");
+            checkScoreAddsUp (result, "random clip");
         }
 
         CHECK_EQ (clips, 150);
     }
+
+#ifdef TRANSCRIBER_FIXTURES_DIR
+    void testFixtureFiles()
+    {
+        const std::string dir = TRANSCRIBER_FIXTURES_DIR;
+
+        // 3 minutes of piano with chords, a bass line, triplets and a melody
+        auto piano = midireader::read (dir + "/t23-piano-3min.mid");
+        CHECK (piano.ok);
+
+        if (piano.ok)
+        {
+            const auto result = transcribePiano (piano.capture, {});
+            CHECK_EQ (result.report.notes, 801);
+            CHECK_EQ (result.report.measures, 90);
+            CHECK_EQ (result.report.offGridNotes, 0);
+            CHECK_EQ (result.report.mergedNotes, 0);
+            CHECK (result.report.warnings.empty());
+            CHECK (result.report.maxVoices <= 3);
+            CHECK_STR (result.score.validate().c_str(), "");
+            checkScoreAddsUp (result, "piano fixture");
+        }
+
+        // every other clip we have must at least come out as a valid score that adds up
+        for (const char* name : { "t21-loop1.mid", "t21-loop2.mid", "t21-loop4.mid", "t21-loop8.mid", "t22-verse.mid", "t22-chorus.mid",
+                                  "t24-held-note.mid", "t11-piano.mid", "t11-drums.mid", "t13-timing.mid", "t23-drums-3min.mid" })
+        {
+            auto f = midireader::read (dir + "/" + name);
+            testing::report (f.ok, __FILE__, __LINE__, std::string (name) + ": " + f.error);
+
+            if (f.ok)
+            {
+                const auto result = transcribePiano (f.capture, {});
+                testing::report (result.score.validate().empty(), __FILE__, __LINE__, std::string (name) + ": invalid score");
+                checkScoreAddsUp (result, name);
+            }
+        }
+    }
+#endif
 
     REGISTER (testCleanNotes, "transcribe: clean-up");
     REGISTER (testBuildBars, "transcribe: bars");
@@ -1150,4 +1217,7 @@ namespace
     REGISTER (testReportAndSettings, "transcribe: report and settings");
     REGISTER (testScoreContents, "transcribe: the score's contents");
     REGISTER (testRandomClipsKeepTheirTimeAndNotes, "transcribe: 150 random clips keep their time and notes");
+#ifdef TRANSCRIBER_FIXTURES_DIR
+    REGISTER (testFixtureFiles, "transcribe: the test clips from the fixtures folder");
+#endif
 }

@@ -280,7 +280,7 @@ QuantizeResult quantize (const std::vector<ResolvedNote>& notes, const std::vect
     for (const auto& [key, flag] : isTriplet)
         tripletAt[bars[key.bar].start + key.beat * beatTicks] = flag;
 
-    auto quantizeEnd = [&] (int64_t absolutePosition, bool onsetBeatIsTriplet)
+    auto quantizeEnd = [&] (int64_t absolutePosition, bool onsetBeatIsTriplet, size_t onsetBar, int64_t onsetBeat)
     {
         // The beat the end falls in, counted from the bar it is in.
         size_t barIndex = 0;
@@ -302,6 +302,12 @@ QuantizeResult quantize (const std::vector<ResolvedNote>& notes, const std::vect
 
         const auto qt = beatStart + roundToSlot (x, triplet);
         const auto et = std::llabs (absolutePosition - qt);
+
+        // A note that starts and ends inside one triplet beat is written in triplet values, however
+        // short it was played (a 16th-length note among eighth triplets is an eighth triplet).
+        if (onsetBeatIsTriplet && barIndex == onsetBar && beat == onsetBeat)
+            return qt;
+
         const auto known = tripletAt.find (beatStart);
 
         if (known != tripletAt.end())
@@ -339,7 +345,7 @@ QuantizeResult quantize (const std::vector<ResolvedNote>& notes, const std::vect
         q.tripletBeat = tripletBeat;
         q.offGrid = std::llabs (q.onError) * 4 > slot;
 
-        const auto end = quantizeEnd (p.off, tripletBeat);
+        const auto end = quantizeEnd (p.off, tripletBeat, p.bar, p.beat);
         q.dur = std::max<int64_t> (end - q.on, slot);
         q.durError = (int) (q.on + q.dur - p.off);
         q.pitch = 0;

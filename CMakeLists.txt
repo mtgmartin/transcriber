@@ -97,6 +97,7 @@ add_executable(TranscriberCoreTests
     ${TRANSCRIBER_CORE_SOURCES})
 
 target_include_directories(TranscriberCoreTests PRIVATE source tests/core)
+target_compile_definitions(TranscriberCoreTests PRIVATE TRANSCRIBER_FIXTURES_DIR="${CMAKE_SOURCE_DIR}/tests/fixtures")
 target_compile_features(TranscriberCoreTests PRIVATE cxx_std_17)
 
 if(MSVC)
