@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.22)
 
-project(TRANSCRIBER VERSION 0.3.0)
+project(TRANSCRIBER VERSION 0.4.0)
 
 # Third-party code is downloaded at configure time (pinned, hash-checked) rather than
 # committed, to keep the repository and local checkout small.
@@ -39,8 +39,14 @@ set(TRANSCRIBER_CORE_SOURCES
     source/core/Commands.cpp
     source/core/Document.cpp
     source/core/Json.cpp
+    source/core/Key.cpp
+    source/core/Quantize.cpp
     source/core/Reading.cpp
-    source/core/Score.cpp)
+    source/core/Rhythm.cpp
+    source/core/Score.cpp
+    source/core/Spelling.cpp
+    source/core/Transcribe.cpp
+    source/core/Voices.cpp)
 
 target_compile_features(Transcriber PRIVATE cxx_std_17)
 
@@ -87,6 +93,7 @@ enable_testing()
 add_executable(TranscriberCoreTests
     tests/core/test_main.cpp
     tests/core/test_score.cpp
+    tests/core/test_transcribe.cpp
     ${TRANSCRIBER_CORE_SOURCES})
 
 target_include_directories(TranscriberCoreTests PRIVATE source tests/core)

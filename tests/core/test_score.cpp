@@ -662,12 +662,13 @@ namespace
 
         // the copy's score is independent of the original's
         {
+            const auto before = (int) doc.find (id2)->score.countNodes();
             auto* copy = doc.findMutable (copyId);
             UndoManager um (copy->score);
             auto part = copy->score.makeNode (nodeType::part);
             CHECK (um.perform (std::make_unique<InsertNodeCommand> (copy->score.root().id, 0, std::move (part))));
-            CHECK_EQ ((int) doc.find (id2)->score.countNodes(), 1);
-            CHECK_EQ ((int) doc.find (copyId)->score.countNodes(), 2);
+            CHECK_EQ ((int) doc.find (id2)->score.countNodes(), before);
+            CHECK_EQ ((int) doc.find (copyId)->score.countNodes(), before + 1);
         }
 
         // delete: the active version goes -> the one before it takes over
@@ -746,6 +747,7 @@ namespace
             auto part = v->score.makeNode (nodeType::part);
             part.props["name"] = Json ("Piano");
             CHECK (um.perform (std::make_unique<InsertNodeCommand> (v->score.root().id, 0, std::move (part))));
+            v->scoreEdited = true;   // the editor will set this whenever a command is performed
             v->setReading (readingWithLoop (v->reading, 4.0, 8.0));
         }
 
@@ -809,6 +811,7 @@ namespace
     void testLoadRejectsDamagedState()
     {
         auto doc = makeDocument();
+        doc.findMutable (doc.versions()[0].id)->scoreEdited = true;   // only an edited score is stored
         const auto good = doc.toJson().dump();
         Document target;
         std::string error;

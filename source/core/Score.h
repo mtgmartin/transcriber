@@ -26,6 +26,7 @@ namespace nodeType
     inline const char* const note    = "note";
     inline const char* const rest    = "rest";
     inline const char* const chord   = "chord";     // holds notes that share one stem
+    inline const char* const tempo   = "tempo";     // a tempo mark or text ("accel."), inside a measure
     inline const char* const spanner = "spanner";   // tie, slur, hairpin, ...: refers to events by id
     inline const char* const layout  = "layout";    // page and system settings
 }
@@ -61,6 +62,11 @@ public:
 
     // Gives a copy of the subtree fresh ids (for pasting or duplicating).
     Node cloneWithNewIds (const Node& source);
+
+    // Fills the score with generated content: the transcription pipeline builds nodes with
+    // makeNode() and hands them over here. This is not an edit (it does not count in revision()),
+    // and it clears nothing the user could undo, so only call it on a score nobody has edited.
+    void setGeneratedContent (std::map<std::string, Json> rootProps, std::vector<Node> children);
 
     // Increases with every change; lets a view know when to redraw.
     uint64_t revision() const noexcept { return revisionCounter; }

@@ -399,6 +399,47 @@ namespace
         CHECK_EQ ((int) (juce::int64) status.getProperty ("stateWarnBytes", 0), (int) statecodec::warnBytes);
     }
 
+    void testTranscriptionSettings()
+    {
+        CaptureService service;
+        record (service, 4, 0);
+        CHECK (waitForVersions (service, 1));
+
+        auto status = service.getStatus();
+        CHECK (status.getProperty ("settings", {}).isObject());
+        CHECK_EQ ((int) status.getProperty ("settings", {}).getProperty ("grid", 0), 16);
+        CHECK ((int) status.getProperty ("transcription", {}).getProperty ("measures", 0) >= 4);
+        CHECK (status.getProperty ("scoreText", {}).toString().contains ("S1 v1:"));
+
+        // a setting changes the score, and is kept
+        service.setTranscriptionSetting ("grid", 8);
+        service.setTranscriptionSetting ("splitPoint", 70);
+        service.setTranscriptionSetting ("triplets", false);
+        service.setTranscriptionSetting ("keyTonic", 7);
+        service.setTranscriptionSetting ("keyMinor", false);
+        service.setTranscriptionSetting ("nonsense", 1);
+        service.setTranscriptionSetting ("splitPoint", 5000);   // out of range: brought back into range
+
+        status = service.getStatus();
+        const auto settings = status.getProperty ("settings", {});
+        CHECK_EQ ((int) settings.getProperty ("grid", 0), 8);
+        CHECK_EQ ((int) settings.getProperty ("splitPoint", 0), 108);
+        CHECK (! (bool) settings.getProperty ("triplets", true));
+        CHECK_EQ ((int) status.getProperty ("transcription", {}).getProperty ("keyTonic", -1), 7);
+        CHECK_EQ ((int) status.getProperty ("transcription", {}).getProperty ("keyFifths", 99), 1);   // G major
+
+        // saved and loaded: the settings come back and the score is made again from the recording
+        juce::MemoryBlock saved;
+        service.saveState (saved);
+        CHECK (saved.getSize() < 8000);   // the score itself is not stored
+
+        CaptureService again;
+        again.loadState (saved.getData(), saved.getSize());
+        const auto loaded = again.getStatus();
+        CHECK_EQ ((int) loaded.getProperty ("settings", {}).getProperty ("grid", 0), 8);
+        CHECK_STR (loaded.getProperty ("scoreText", {}).toString().toRawUTF8(), status.getProperty ("scoreText", {}).toString().toRawUTF8());
+    }
+
     struct Test { const char* name; void (*fn)(); };
 
     const Test tests[] = {
@@ -410,6 +451,7 @@ namespace
         { "service: an empty recording makes no version", testEmptyRecordingMakesNoVersion },
         { "service: an unreadable state is kept", testUnreadableStateIsKept },
         { "service: the state size is reported", testStateSizeIsReported },
+        { "service: transcription settings", testTranscriptionSettings },
     };
 }
 

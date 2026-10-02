@@ -32,6 +32,10 @@ public:
     void setLoopBars (int numBars);
     void redetect();
 
+    // The transcription settings of the version that is shown: "grid" (4, 8, 16, 32), "triplets",
+    // "splitPoint", "autoPickup", "keyTonic" (-1 = detect, else 0-11) and "keyMinor".
+    void setTranscriptionSetting (const juce::String& name, const juce::var& value);
+
     // Versions
     void selectVersion (const juce::String& id);
     void renameVersion (const juce::String& id, const juce::String& name);
@@ -71,6 +75,9 @@ private:
     // was and written back unchanged until the user records something new.
     juce::MemoryBlock unreadableState;
     juce::String loadMessage;
+
+    // The score as text for the page, worked out again only when the version changes.
+    mutable std::string scoreTextKey, scoreTextCache;
 
     mutable uint64_t sizedRevision = ~(uint64_t) 0;
     mutable double sizedAtMs = 0.0;

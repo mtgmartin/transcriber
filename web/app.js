@@ -184,6 +184,7 @@ function renderVersions(s) {
 on("capture", function (s) {
   capStatus = s;
   renderVersions(s);
+  showTranscription(s);
 
   const pill = $("cap-state");
   pill.textContent = stateLabels[s.state] || s.state;
@@ -211,6 +212,90 @@ on("capture", function (s) {
   const text = $("reading-text");
   text.className = "result" + (s.incomplete ? " bad" : "");
   text.textContent = describeReading(s);
+});
+
+// ---- Notation settings and the score -----------------------------------------------
+const majorNames = ["Cb", "Gb", "Db", "Ab", "Eb", "Bb", "F", "C", "G", "D", "A", "E", "B", "F#", "C#"];
+const minorNames = ["Ab", "Eb", "Bb", "F", "C", "G", "D", "A", "E", "B", "F#", "C#", "G#", "D#", "A#"];
+const pitchNames = ["C", "C#", "D", "Eb", "E", "F", "F#", "G", "Ab", "A", "Bb", "B"];
+
+function keyName(fifths, minor) {
+  const names = minor ? minorNames : majorNames;
+  return names[Math.max(0, Math.min(14, fifths + 7))] + (minor ? " minor" : " major");
+}
+
+function signatureText(fifths) {
+  if (fifths === 0) return "no sharps or flats";
+  return Math.abs(fifths) + (fifths > 0 ? " sharp" : " flat") + (Math.abs(fifths) === 1 ? "" : "s");
+}
+
+function noteName(midi) {
+  return pitchNames[midi % 12] + (Math.floor(midi / 12) - 1);
+}
+
+(function fillKeyList() {
+  const select = $("set-key");
+  const auto = document.createElement("option");
+  auto.value = "auto";
+  auto.textContent = "Detect";
+  select.appendChild(auto);
+  [false, true].forEach(function (minor) {
+    for (let tonic = 0; tonic < 12; tonic++) {
+      const o = document.createElement("option");
+      o.value = tonic + (minor ? "m" : "M");
+      o.textContent = pitchNames[tonic] + (minor ? " minor" : " major");
+      select.appendChild(o);
+    }
+  });
+})();
+
+function setSetting(name, value) { send("setSetting", { name: name, value: value }); }
+
+$("set-grid").addEventListener("change", function (e) { setSetting("grid", parseInt(e.target.value, 10)); });
+$("set-triplets").addEventListener("change", function (e) { setSetting("triplets", e.target.checked); });
+$("set-pickup").addEventListener("change", function (e) { setSetting("autoPickup", e.target.checked); });
+$("set-split").addEventListener("change", function (e) {
+  const v = parseInt(e.target.value, 10);
+  if (v >= 21 && v <= 108) setSetting("splitPoint", v);
+});
+$("set-key").addEventListener("change", function (e) {
+  if (e.target.value === "auto") { setSetting("keyTonic", -1); return; }
+  setSetting("keyTonic", parseInt(e.target.value, 10));
+  setSetting("keyMinor", e.target.value.endsWith("m"));
+});
+
+function showTranscription(s) {
+  const has = !!s.settings;
+  ["set-grid", "set-triplets", "set-split", "set-pickup", "set-key"].forEach(function (id) { $(id).disabled = !has || s.state === "recording"; });
+
+  if (!has) {
+    $("score-info").textContent = s.state === "recording" ? "The score is made when the recording stops." : "No score yet.";
+    $("score-text").textContent = "";
+    return;
+  }
+
+  const cfg = s.settings, t = s.transcription;
+  const idle = function (id) { return document.activeElement !== $(id); };
+  if (idle("set-grid")) $("set-grid").value = String(cfg.grid);
+  if (idle("set-triplets")) $("set-triplets").checked = cfg.triplets;
+  if (idle("set-pickup")) $("set-pickup").checked = cfg.autoPickup;
+  if (idle("set-split")) $("set-split").value = cfg.splitPoint;
+  if (idle("set-key")) $("set-key").value = cfg.keyTonic < 0 ? "auto" : cfg.keyTonic + (cfg.keyMinor ? "m" : "M");
+  $("split-name").textContent = noteName(cfg.splitPoint);
+
+  const lines = [];
+  lines.push("Key: " + keyName(t.keyFifths, t.keyMinor) + " (" + signatureText(t.keyFifths) + ")" +
+             (cfg.keyTonic < 0 ? ", detected" : ", set by you") + " · " + t.measures + " measure" + (t.measures === 1 ? "" : "s") +
+             " · up to " + t.voices + " voice" + (t.voices === 1 ? "" : "s") + " in a hand" +
+             (t.edited ? " · edited by you" : ""));
+  t.warnings.forEach(function (w) { lines.push("Note: " + w); });
+  $("score-info").className = "result" + (t.warnings.length ? " warn" : "");
+  $("score-info").textContent = lines.join("\n");
+  if ($("score-details").open) $("score-text").textContent = s.scoreText || "";
+}
+
+$("score-details").addEventListener("toggle", function () {
+  if ($("score-details").open && capStatus) $("score-text").textContent = capStatus.scoreText || "";
 });
 
 on("preview", function (p) {

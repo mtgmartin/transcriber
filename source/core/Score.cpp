@@ -190,7 +190,7 @@ bool isValidChild (const std::string& parent, const std::string& child)
 
     if (parent == nodeType::part)    return child == nodeType::staff;
     if (parent == nodeType::staff)   return child == nodeType::measure;
-    if (parent == nodeType::measure) return child == nodeType::layer;
+    if (parent == nodeType::measure) return child == nodeType::layer || child == nodeType::tempo;
 
     if (parent == nodeType::layer)
         return child == nodeType::note || child == nodeType::rest || child == nodeType::chord;
@@ -224,6 +224,12 @@ Node* Score::findMutable (const std::string& id)
 Node* Score::findParentMutable (const std::string& id, size_t* indexInParent)
 {
     return const_cast<Node*> (findParentIn (rootNode, id, indexInParent));
+}
+
+void Score::setGeneratedContent (std::map<std::string, Json> rootProps, std::vector<Node> children)
+{
+    rootNode.props = std::move (rootProps);
+    rootNode.children = std::move (children);
 }
 
 Node Score::makeNode (const std::string& type)

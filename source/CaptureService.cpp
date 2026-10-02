@@ -150,6 +150,31 @@ void CaptureService::redetect()
     }
 }
 
+void CaptureService::setTranscriptionSetting (const juce::String& name, const juce::var& value)
+{
+    const std::lock_guard<std::mutex> lock (mutex);
+    auto* v = document.activeMutable();
+
+    if (v == nullptr)
+        return;
+
+    auto s = v->transcriptionSettings();
+
+    if (name == "grid")            s.grid = (int) value;
+    else if (name == "triplets")   s.triplets = (bool) value;
+    else if (name == "splitPoint") s.splitPoint = (int) value;
+    else if (name == "autoPickup") s.autoPickup = (bool) value;
+    else if (name == "keyTonic")   s.keyTonic = (int) value;
+    else if (name == "keyMinor")   s.keyMinor = (bool) value;
+    else return;
+
+    // Out-of-range values are brought back by the settings reader.
+    s = trs::TranscriptionSettings::fromJson (s.toJson());
+
+    if (! (s == v->transcriptionSettings()))
+        v->setTranscriptionSettings (s);
+}
+
 void CaptureService::selectVersion (const juce::String& id)
 {
     const std::lock_guard<std::mutex> lock (mutex);
@@ -262,6 +287,54 @@ juce::var CaptureService::getStatus() const
         e->setProperty ("loopBars", ver.reading.loopLengthPpq > 0.0 ? trs::loopBarsOf (ver.capture, ver.reading) : 0);
         e->setProperty ("active", ver.id == document.activeId());
         versions.add (juce::var (e));
+    }
+
+    if (! live && v != nullptr)
+    {
+        const auto settings = v->transcriptionSettings();
+        auto* st = new juce::DynamicObject();
+        st->setProperty ("grid", settings.grid);
+        st->setProperty ("triplets", settings.triplets);
+        st->setProperty ("splitPoint", settings.splitPoint);
+        st->setProperty ("autoPickup", settings.autoPickup);
+        st->setProperty ("keyTonic", settings.keyTonic);
+        st->setProperty ("keyMinor", settings.keyMinor);
+        o->setProperty ("settings", juce::var (st));
+
+        auto* t = new juce::DynamicObject();
+        t->setProperty ("keyTonic", v->key.tonic);
+        t->setProperty ("keyMinor", v->key.minor);
+        t->setProperty ("keyFifths", v->key.fifths);
+        t->setProperty ("keyCorrelation", v->key.correlation);
+        t->setProperty ("measures", v->report.measures);
+        t->setProperty ("voices", v->report.maxVoices);
+        t->setProperty ("offGrid", v->report.offGridNotes);
+        t->setProperty ("tripletBeats", v->report.tripletBeats);
+        t->setProperty ("edited", v->scoreEdited);
+
+        juce::Array<juce::var> warnings;
+
+        for (const auto& w : v->report.warnings)
+            warnings.add (juce::String::fromUTF8 (w.c_str()));
+
+        t->setProperty ("warnings", warnings);
+        o->setProperty ("transcription", juce::var (t));
+
+        const auto key = v->id + "#" + std::to_string (v->revision());
+
+        if (key != scoreTextKey)
+        {
+            scoreTextKey = key;
+            scoreTextCache = trs::dumpScore (v->score);
+
+            if (scoreTextCache.size() > 40000)
+            {
+                scoreTextCache.resize (40000);
+                scoreTextCache += "\n... (the rest is not shown)\n";
+            }
+        }
+
+        o->setProperty ("scoreText", juce::String::fromUTF8 (scoreTextCache.c_str()));
     }
 
     o->setProperty ("versions", versions);

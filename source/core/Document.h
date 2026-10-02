@@ -2,6 +2,7 @@
 
 #include "CaptureTypes.h"
 #include "Json.h"
+#include "Notation.h"
 #include "Reading.h"
 #include "Score.h"
 
@@ -19,6 +20,9 @@ bool captureFromJson (const Json&, RawCapture& result, std::string* error = null
 
 Json readingToJson (const Reading&);
 Reading readingFromJson (const Json&);
+
+Json transcriptionToJson (const KeyResult&, const TranscriptionReport&);
+void transcriptionFromJson (const Json&, KeyResult&, TranscriptionReport&);
 
 Json detectionToJson (const Detection&);
 Detection detectionFromJson (const Json&);
@@ -38,9 +42,23 @@ public:
     Detection detection;
     Score score;
 
+    // What the transcription made of the recording (the key and the warnings), kept with the score.
+    KeyResult key;
+    TranscriptionReport report;
+
+    // True once the user has changed the score; the transcription then leaves it alone.
+    bool scoreEdited = false;
+
     // The notes after the reading is applied; kept until the reading changes.
     const ResolvedCapture& resolved() const;
+
+    // Changing the reading or the settings writes the score again, unless it has been edited.
     void setReading (const Reading&);
+    TranscriptionSettings transcriptionSettings() const { return TranscriptionSettings::fromJson (settings); }
+    void setTranscriptionSettings (const TranscriptionSettings&);
+
+    // Makes the score from the recording (piano only for now). Does nothing for an edited score.
+    void regenerate();
 
     // Increases when the reading or the score changes.
     uint64_t revision() const noexcept { return readingRevision + score.revision(); }

@@ -211,6 +211,57 @@ Detection detectionFromJson (const Json& j)
     return d;
 }
 
+Json transcriptionToJson (const KeyResult& key, const TranscriptionReport& report)
+{
+    auto j = Json::object();
+
+    auto k = Json::object();
+    k.set ("tonic", key.tonic);
+    k.set ("minor", key.minor);
+    k.set ("fifths", key.fifths);
+    k.set ("correlation", key.correlation);
+    j.set ("key", std::move (k));
+
+    auto r = Json::object();
+    r.set ("notes", report.notes);
+    r.set ("offGridNotes", report.offGridNotes);
+    r.set ("tripletBeats", report.tripletBeats);
+    r.set ("mergedNotes", report.mergedNotes);
+    r.set ("measures", report.measures);
+    r.set ("maxVoices", report.maxVoices);
+
+    auto warnings = Json::array();
+
+    for (const auto& w : report.warnings)
+        warnings.push (w);
+
+    r.set ("warnings", std::move (warnings));
+    j.set ("report", std::move (r));
+    return j;
+}
+
+void transcriptionFromJson (const Json& j, KeyResult& key, TranscriptionReport& report)
+{
+    key = {};
+    report = {};
+    const auto& k = j.get ("key");
+    key.tonic = (int) k.get ("tonic").asInt();
+    key.minor = k.get ("minor").asBool();
+    key.fifths = (int) k.get ("fifths").asInt();
+    key.correlation = k.get ("correlation").asDouble();
+
+    const auto& r = j.get ("report");
+    report.notes = (int) r.get ("notes").asInt();
+    report.offGridNotes = (int) r.get ("offGridNotes").asInt();
+    report.tripletBeats = (int) r.get ("tripletBeats").asInt();
+    report.mergedNotes = (int) r.get ("mergedNotes").asInt();
+    report.measures = (int) r.get ("measures").asInt();
+    report.maxVoices = (int) r.get ("maxVoices").asInt();
+
+    for (const auto& w : r.get ("warnings").items())
+        report.warnings.push_back (w.asString());
+}
+
 //==============================================================================
 const ResolvedCapture& Version::resolved() const
 {
@@ -228,6 +279,25 @@ void Version::setReading (const Reading& r)
     reading = r;
     cacheValid = false;
     ++readingRevision;
+    regenerate();
+}
+
+void Version::setTranscriptionSettings (const TranscriptionSettings& s)
+{
+    settings = s.toJson();
+    ++readingRevision;
+    regenerate();
+}
+
+void Version::regenerate()
+{
+    if (scoreEdited)
+        return;
+
+    auto result = transcribePiano (resolved(), transcriptionSettings());
+    score = std::move (result.score);
+    key = result.key;
+    report = std::move (result.report);
 }
 
 //==============================================================================
@@ -302,6 +372,8 @@ std::string Document::addVersion (const RawCapture& capture, const Reading& read
     v.reading = reading;
     v.detection = detection;
     v.profile.set ("type", "piano");   // the instrument profile arrives in Phase 5/6
+    v.settings = TranscriptionSettings().toJson();
+    v.regenerate();
 
     list.push_back (std::move (v));
     activeVersionId = list.back().id;
@@ -406,7 +478,13 @@ Json Document::toJson() const
         o.set ("capture", captureToJson (v.capture));
         o.set ("reading", readingToJson (v.reading));
         o.set ("detection", detectionToJson (v.detection));
-        o.set ("score", v.score.toJson());
+        // A score nobody has edited is made again from the recording when the state is loaded, which
+        // keeps the saved state small and lets a better transcription improve old takes.
+        if (v.scoreEdited)
+            o.set ("score", v.score.toJson());
+
+        o.set ("scoreEdited", v.scoreEdited);
+        o.set ("transcription", transcriptionToJson (v.key, v.report));
         versions.push (std::move (o));
     }
 
@@ -459,6 +537,16 @@ LoadResult Document::fromJson (const Json& source, Document& result, std::string
 
         if (o.has ("score") && ! Score::fromJson (o.get ("score"), v.score, error))
             return LoadResult::invalid;
+
+        v.scoreEdited = o.get ("scoreEdited").asBool();
+        transcriptionFromJson (o.get ("transcription"), v.key, v.report);
+
+        // Not edited (or saved by a build that did not make scores yet): make the score from the recording.
+        if (! v.scoreEdited || v.score.root().children.empty())
+        {
+            v.scoreEdited = false;
+            v.regenerate();
+        }
 
         d.list.push_back (std::move (v));
     }

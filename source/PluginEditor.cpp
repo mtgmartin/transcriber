@@ -86,6 +86,10 @@ juce::WebBrowserComponent::Options TranscriberEditor::makeBrowserOptions()
             processor.getCapture().setLoopBars ((int) data.getProperty ("bars", 0));
         })
         .withEventListener ("capRedetect", [this] (juce::var) { processor.getCapture().redetect(); })
+        .withEventListener ("setSetting", [this] (juce::var data)
+        {
+            processor.getCapture().setTranscriptionSetting (data.getProperty ("name", {}).toString(), data.getProperty ("value", {}));
+        })
         .withEventListener ("diagnostics", [this] (juce::var data)
         {
             processor.setDiagnosticsEnabled ((bool) data.getProperty ("enabled", false));

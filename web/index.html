@@ -32,6 +32,22 @@
       <span>bars</span>
       <button id="redetect" type="button">Detect again</button>
     </div>
+    <div class="row" id="settings-row">
+      <span>Notation</span>
+      <label for="set-grid">Grid</label>
+      <select id="set-grid">
+        <option value="4">1/4</option><option value="8">1/8</option><option value="16">1/16</option><option value="32">1/32</option>
+      </select>
+      <label><input type="checkbox" id="set-triplets"> Triplets</label>
+      <label for="set-split">Hands split at</label>
+      <input id="set-split" type="number" min="21" max="108" step="1" value="60">
+      <span class="dim" id="split-name"></span>
+      <label><input type="checkbox" id="set-pickup"> Pickup bar</label>
+      <label for="set-key">Key</label>
+      <select id="set-key"></select>
+    </div>
+    <p id="score-info" class="result">No score yet.</p>
+    <details id="score-details"><summary>Score as text</summary><pre id="score-text" class="result"></pre></details>
     <div class="row">
       <button id="compare" type="button">Compare with MIDI file…</button>
       <span class="dim">Checks the score notes (after the reading above) against a <code>.mid</code> exported from the same clip.</span>
