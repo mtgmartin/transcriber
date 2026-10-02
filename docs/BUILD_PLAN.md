@@ -1,6 +1,6 @@
 # Transcriber build plan
 
-Last updated 2026-10-02. **Current state: Phase 3 code complete and green in CI (build 0.3.0); its Live tests (docs/phase3-tests.md) still to run. Phase 2 passed in Live (docs/phase2-results.md).**
+Last updated 2026-10-02. **Current state: Phases 0-3 done and tested in Live (Phase 3 results: docs/phase3-results.md). Next: Phase 4, the transcription pipeline (piano first).**
 
 Transcriber is a Windows VST3 plugin for Ableton Live 11. It records the MIDI that plays on its track,
 in Session or Arrangement View, and turns it into editable sheet music for piano, drum kit or
@@ -305,7 +305,7 @@ Full results are in `docs/phase1-results.md`.
 - A 4/4 → 3/4 → 4/4 song keeps every bar line in place.
 - pluginval passes at strictness 5, and the unit tests pass in CI.
 
-### Phase 3: score model, versions, saving (CODE DONE, LIVE TESTS PENDING)
+### Phase 3: score model, versions, saving (DONE, gate passed 2026-10-02)
 **What was built (build 0.3.0, CI green; 48 core tests + 8 JUCE tests):**
 - `source/core/Json.*`: a small JSON value (no JUCE). Doubles are written in the shortest form that reads back identically, object members keep their order, and all-number arrays are kept packed (8 bytes per number) so long captures stay small in memory.
 - `source/core/Score.*`: the editable score is a **generic tree of nodes** (`id`, `type`, scalar `props`, `children`) with stable ids such as `note-17` (they become the MEI `xml:id`s). Types and nesting: score → part → staff → measure → layer → note/rest/chord (chord → note); spanner and layout sit under the score. Property values are numbers, strings or booleans only. `validate()` checks unique ids, legal nesting and scalar properties; JSON load runs it and refuses a damaged score.
@@ -443,10 +443,7 @@ Tools in `tools/live/`. Copy them to the scratchpad or run them in place.
 
 ## 9. Status (update every session)
 
-- **Done:** Phases 0, 1 and 2 (Phase 2 passed every item in Live with build 0.2.0; docs/phase2-results.md).
-  Phase 3 code is on `main`: build 0.3.0, CI green (48 core tests, 8 JUCE tests, pluginval, no warnings in our code).
-  It also contains the Phase 2 UI fixes (Armed shown at once, Compare in the Capture panel, hint for long self-repeating clips).
-- **Waiting on the user:** install 0.3.0 (admin PowerShell, Live closed, `scripts\install.ps1`) so the Phase 3 tests can run in Live.
-  Note: a Live set saved with 0.2.0 or earlier has no versions (the old state is ignored and the page says so).
-- **Next:** run `docs/phase3-tests.md` in Live (record 3 takes, save, close, reopen: all versions back, raw capture unchanged),
-  fix what it finds, write `docs/phase3-results.md`, then start Phase 4 (transcription pipeline, piano first).
+- **Done:** Phases 0, 1, 2 and 3, all with their Live tests (docs/phase2-results.md, docs/phase3-results.md). Latest build 0.3.0, CI green (48 core tests, 8 JUCE tests, pluginval, no warnings in our code). Installed and tested in Live: 0.3.0. Small page fix after that (no versions -> "Nothing recorded yet.") is on main, not installed.
+- **Waiting on the user:** the Phase 4 test clips (about 10 reference clips with expected scores; see Phase 4 below). Nothing to install.
+- **Next:** Phase 4: transcription pipeline stages 1-7 as separate functions with unit tests, piano first; golden files (fixture MIDI -> expected score JSON). Then Phase 5 (MEI writer and the notation UI).
+- **Live test setup notes:** the Phase 2 meter markers were deleted from `test Project` (they changed the bars of Session clips); the set holds clips t21-t24 in track 7's slots 1-8 and a t23 drums clip in the Arrangement.

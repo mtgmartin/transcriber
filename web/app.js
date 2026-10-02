@@ -38,7 +38,10 @@ const stateLabels = {
 };
 
 function describeReading(s) {
-  if (s.state === "idle" && !s.rawNotes) return "Nothing recorded yet.";
+  if (!s.versions.length && s.state !== "recording" && s.state !== "armed")
+    return s.state === "stopped" && s.lastStopEmpty
+      ? "Nothing was recorded (no notes were played), so no version was made."
+      : "Nothing recorded yet.";
   if (s.state === "armed") return "Waiting for Live to play…";
   if (s.state === "recording")
     return s.rawNotes + " notes so far, " + s.bars + " bars. The reading is chosen when the recording stops.";
