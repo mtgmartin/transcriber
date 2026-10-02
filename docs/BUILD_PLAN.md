@@ -1,6 +1,6 @@
 # Transcriber build plan
 
-Last updated 2026-10-01. **Current state: Phase 2 complete and tested in Live (build 0.2.0; results in docs/phase2-results.md). Next: Phase 3, the score model, versions and saving.**
+Last updated 2026-10-02. **Current state: Phase 3 code complete and green in CI (build 0.3.0); its Live tests (docs/phase3-tests.md) still to run. Phase 2 passed in Live (docs/phase2-results.md).**
 
 Transcriber is a Windows VST3 plugin for Ableton Live 11. It records the MIDI that plays on its track,
 in Session or Arrangement View, and turns it into editable sheet music for piano, drum kit or
@@ -63,8 +63,9 @@ https://claude.ai/artifact/DKgFpy21eNeM8hECT8LyFT. This file is the working copy
 | `.github/workflows/build.yml` | windows-2022 runner, VS 2022 generator, pluginval v1.0.4 at strictness 5, uploads the `Transcriber-VST3` artifact. |
 | `scripts/install.ps1` | Downloads the latest successful build and copies it to the VST3 folder. Needs admin. |
 | `source/core/` | The capture core, **no JUCE dependency** (namespace `trs`): `CaptureEngine` (audio thread: state machine and lock-free ring), `CaptureModel` (records to notes, segments, bars, tempo; holds the reading), `Reading` (loop detection and the One loop / As played rules). |
-| `source/` | Plugin glue: `CaptureService` (drain thread and UI data), `MidiCompare` (the MIDI-file comparison), `DiagnosticLog` (JSONL log, **off unless switched on in the page**), processor, WebView2 editor. |
-| `tests/core/` | Unit tests for the core: `test_main.cpp` plus `SimHost.h`, a simulated Live (blocks, loop-split blocks, bar lines, tempo lag, stop flush). Run by CI with ctest; run locally with g++ (see Build loop). |
+| `source/` | Plugin glue: `CaptureService` (drain thread, versions, saved state, UI data), `StateCodec` (header, checksum and gzip of the saved state), `MidiCompare` (the MIDI-file comparison), `DiagnosticLog` (JSONL log, **off unless switched on in the page**), processor, WebView2 editor. |
+| `tests/core/` | Unit tests for the core: `test_main.cpp` (capture), `test_score.cpp` (JSON, score, undo, versions, documents), `SimHost.h` (a simulated Live: blocks, loop-split blocks, bar lines, tempo lag, stop flush) and `TestSupport.h` (CHECK macros). Run by CI with ctest; run locally with g++ (see Build loop). |
+| `tests/juce/` | `state_tests.cpp`: tests that need JUCE (the state codec and `CaptureService`, driven by the simulated Live). A second ctest target, built by CI only. |
 | `web/` | Bundled UI page (`index.html`, `app.js`, `style.css`) and three MEI test scores. |
 | `tests/fixtures/*.mid` | Test clips used in Phase 1 (format in §8). |
 | `tools/live/` | PowerShell helpers to drive Live and read logs (§8), and `make-phase2-fixtures.ps1` (Phase 2 test clips). |
@@ -72,7 +73,7 @@ https://claude.ai/artifact/DKgFpy21eNeM8hECT8LyFT. This file is the working copy
 
 ### Build loop
 0. Run the core unit tests locally (about 10 s; Git Bash):
-   `export PATH="$PATH:/c/msys64/ucrt64/bin"; g++ -std=c++17 -O1 -Wall -Wextra -Wshadow -Wconversion -Wsign-conversion -Isource -Itests/core source/core/*.cpp tests/core/test_main.cpp -o /tmp/core_tests.exe && /tmp/core_tests.exe`
+   `export PATH="$PATH:/c/msys64/ucrt64/bin"; g++ -std=c++17 -O1 -Wall -Wextra -Wshadow -Wconversion -Wsign-conversion -Isource -Itests/core source/core/*.cpp tests/core/test_main.cpp tests/core/test_score.cpp -o /tmp/t/core_tests.exe && /tmp/t/core_tests.exe` (after `mkdir -p /tmp/t`)
    (Check g++'s exit status itself: piping it to `head` hides a failed compile and runs a stale exe.)
 1. Edit, commit, then `git push`.
 2. Watch CI:
@@ -94,6 +95,9 @@ https://claude.ai/artifact/DKgFpy21eNeM8hECT8LyFT. This file is the working copy
 - **Verovio tab:** `staffDef notationtype="tab.guitar" lines="6"`, `<clef shape="TAB"/>`, `<tuning tuning.standard="guitar.standard"/>`, and `tabGrp` holding `note tab.course tab.fret` (course 1 = top line).
 - **svg2pdf.js drops `@font-face`.** Text uses jsPDF's standard fonts, which are ASCII only; add a TTF for non-ASCII titles.
 - **Notes land on a sample, not exactly on the line.** At 127 bpm a downbeat can arrive 2e-5 quarter notes early. Anything that groups notes by bar or pass uses `boundaryTolerance` (0.01) in `Reading.cpp`; a test at 127 bpm caught this.
+- **Editing files with scripts:** a perl `s|a|b|` whose text contains `||` silently matches nothing useful and corrupts the file (it did, twice). Use `s/\$old/$new/` in a script file, or the Edit tool; and don't mix the Edit tool with shell edits of the same file (Edit works from its own copy and silently undoes the shell edit).
+- **`juce::var::operator[]` does not check the index** in release builds: an index past the end crashes (a CI test segfaulted). Look through `getArray()` instead.
+- **MSVC reads `XXXX` even inside raw strings** (error C3850 for surrogates): write test text with a doubled backslash.
 - **Windows long paths:** a plain `git clone` of JUCE fails on this machine ("Filename too long"), so JUCE can't be compiled locally.
 - **PDF sizing:** `pageWidth:4200, pageHeight:5940, scale:50, mmOutput:true` gives exactly A4 with smaller notation.
 
@@ -301,7 +305,18 @@ Full results are in `docs/phase1-results.md`.
 - A 4/4 → 3/4 → 4/4 song keeps every bar line in place.
 - pluginval passes at strictness 5, and the unit tests pass in CI.
 
-### Phase 3: score model, versions, saving
+### Phase 3: score model, versions, saving (CODE DONE, LIVE TESTS PENDING)
+**What was built (build 0.3.0, CI green; 48 core tests + 8 JUCE tests):**
+- `source/core/Json.*`: a small JSON value (no JUCE). Doubles are written in the shortest form that reads back identically, object members keep their order, and all-number arrays are kept packed (8 bytes per number) so long captures stay small in memory.
+- `source/core/Score.*`: the editable score is a **generic tree of nodes** (`id`, `type`, scalar `props`, `children`) with stable ids such as `note-17` (they become the MEI `xml:id`s). Types and nesting: score → part → staff → measure → layer → note/rest/chord (chord → note); spanner and layout sit under the score. Property values are numbers, strings or booleans only. `validate()` checks unique ids, legal nesting and scalar properties; JSON load runs it and refuses a damaged score.
+- `source/core/Commands.*`: the only way the score changes. `SetProperty`, `InsertNode`, `RemoveNode`, `MoveNode` and `Composite`, each with `apply`/`revert`; `UndoManager` with grouping (`beginGroup`/`endGroup` make one undo step), a step limit and redo. A test applies 3000 random edits and undoes and redoes them exactly. Phase 7's editing operations are built from these.
+- `source/core/Document.*`: `Document` holds `Version`s (id, name, created time, profile, settings, raw capture, reading, detection, score), the active version id, `uiPrefs` and `drumMaps`. Operations: add (named "Take N"; the numbers and ids are never reused), select, rename, duplicate (copy goes after the source and becomes active), remove (the neighbour before takes over). The raw capture is never edited; only the reading and the score are. Saved as JSON with `schemaVersion` (now **1**) and `migrateDocument` (a list of steps, step *i* upgrades *i* → *i+1*). A document from a newer schema is refused as `tooNew`; damaged data as `invalid`.
+- `source/StateCodec.*`: what the host stores: header `TRSC`, container format, 0 = stored / 1 = gzip, JSON size and an FNV-1a checksum, then the JSON or its gzip. Anything else (empty, or the Phase 1 `TRS1` test state) is ignored without error.
+- `CaptureService`: each ended recording that holds notes becomes a version at once (an empty recording makes none, and the page says so). Reading edits and the MIDI-file comparison apply to the active version. **An unreadable saved state (damaged, or from a newer Transcriber) is kept byte for byte and written back until the user records something new**, with a message in the page. The state size is worked out at most once a second; the page warns at 5 MB.
+- Page: a Versions list next to the Capture panel (click to select, Rename, Duplicate, Delete with an in-page "Delete 'name'?" confirmation), the saved size, and load messages. The Phase 1 state-test panel and the Clear button are gone.
+- Not built yet: the Score is empty in every version until Phase 4 fills it, and there is no UI for editing it (Phase 7). The undo history is not saved.
+
+**Original build list:**
 **Build:**
 - `Score` model with stable IDs, and commands with undo/redo.
 - Versions: create on stop, list, rename, duplicate, delete (with an in-UI confirmation).
@@ -428,6 +443,10 @@ Tools in `tools/live/`. Copy them to the scratchpad or run them in place.
 
 ## 9. Status (update every session)
 
-- **Done:** Phases 0, 1 and 2. Phase 2 passed every item in Live (build 0.2.0; docs/phase2-results.md). Next build (UI fixes: Armed shown at once, Compare in the Capture panel, hint for long self-repeating clips) is on `main` once CI is green and is **not yet installed**.
-- **Waiting on the user:** install the latest build only if they want those UI fixes now (admin PowerShell, Live closed, `scriptsinstall.ps1`); Phase 3 does not depend on it.
-- **Next:** Phase 3: `Score` model with stable IDs and commands (undo/redo), versions (create on stop, list, rename, duplicate, delete), gzip state with schemaVersion and a size warning; round-trip unit tests; in Live record 3 takes, save, close, reopen.
+- **Done:** Phases 0, 1 and 2 (Phase 2 passed every item in Live with build 0.2.0; docs/phase2-results.md).
+  Phase 3 code is on `main`: build 0.3.0, CI green (48 core tests, 8 JUCE tests, pluginval, no warnings in our code).
+  It also contains the Phase 2 UI fixes (Armed shown at once, Compare in the Capture panel, hint for long self-repeating clips).
+- **Waiting on the user:** install 0.3.0 (admin PowerShell, Live closed, `scripts\install.ps1`) so the Phase 3 tests can run in Live.
+  Note: a Live set saved with 0.2.0 or earlier has no versions (the old state is ignored and the page says so).
+- **Next:** run `docs/phase3-tests.md` in Live (record 3 takes, save, close, reopen: all versions back, raw capture unchanged),
+  fix what it finds, write `docs/phase3-results.md`, then start Phase 4 (transcription pipeline, piano first).

@@ -73,6 +73,12 @@ let renamingId = null;      // the version whose name is being edited
 let confirmingId = null;    // the version waiting for "Delete?" to be confirmed
 let lastVersionsKey = "";
 
+// Draws the list again at once (after a click), instead of waiting for the next status from the plugin.
+function rerenderVersions() {
+  lastVersionsKey = "";
+  if (capStatus) renderVersions(capStatus);
+}
+
 function formatSize(bytes) {
   if (bytes >= 1048576) return (bytes / 1048576).toFixed(2) + " MB";
   if (bytes >= 1024) return (bytes / 1024).toFixed(1) + " KB";
@@ -114,7 +120,7 @@ function renderVersions(s) {
         done = true;
         renamingId = null;
         if (commit && input.value.trim() && input.value.trim() !== v.name) send("verRename", { id: v.id, name: input.value.trim() });
-        lastVersionsKey = "";   // draw the list again
+        rerenderVersions();   // draw the list again
       };
       input.addEventListener("keydown", function (e) {
         if (e.key === "Enter") finish(true);
@@ -153,11 +159,11 @@ function renderVersions(s) {
         confirmingId = null;
         send("verDelete", { id: v.id });
       }, "danger");
-      button("Cancel", function () { confirmingId = null; lastVersionsKey = ""; });
+      button("Cancel", function () { confirmingId = null; rerenderVersions(); });
     } else {
-      button("Rename", function () { renamingId = v.id; lastVersionsKey = ""; });
+      button("Rename", function () { renamingId = v.id; rerenderVersions(); });
       button("Duplicate", function () { send("verDuplicate", { id: v.id }); });
-      button("Delete", function () { confirmingId = v.id; lastVersionsKey = ""; });
+      button("Delete", function () { confirmingId = v.id; rerenderVersions(); });
     }
 
     li.appendChild(actions);

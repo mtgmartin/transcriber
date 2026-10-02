@@ -2,7 +2,7 @@
 
 A VST3 plugin for Ableton Live 11 (Windows) that records the MIDI played on its track and turns it into editable sheet music for piano, drum kit or guitar/bass, with PDF export. Editing the score never changes the MIDI.
 
-**Status:** Phase 2 build (0.2.0). The plugin records the MIDI it receives, decides whether a looping clip is one loop or a sequence ("One loop" / "As played"), and shows the result as a piano-roll preview. Notation, saving and export come in later phases. See [docs/BUILD_PLAN.md](docs/BUILD_PLAN.md) and [docs/phase2-tests.md](docs/phase2-tests.md).
+**Status:** Phase 3 build (0.3.0). The plugin records the MIDI it receives, decides whether a looping clip is one loop or a sequence ("One loop" / "As played"), and shows the result as a piano-roll preview. Every recording is kept as a version that is saved with the Live set. Notation, saving and export come in later phases. See [docs/BUILD_PLAN.md](docs/BUILD_PLAN.md) and [docs/phase2-tests.md](docs/phase2-tests.md).
 
 ## Build
 

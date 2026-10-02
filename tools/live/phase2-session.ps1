@@ -4,7 +4,7 @@
 # -TransportStop: end by stopping Live's transport instead of the plugin's Stop button.
 param([int]$SlotY, [double]$Seconds, [string]$Shot, [int]$SlotX = 983, [int]$Launch2Y = 0, [double]$Launch2At = 0, [switch]$TransportStop)
 $inp = Join-Path $PSScriptRoot "input.ps1"
-& $inp "click 1478 206; click 1136 60; click 1136 60; wait 300; click 1292 206; wait 400; click $SlotX $SlotY"
+& $inp "click 1136 60; click 1136 60; wait 300; click 1292 206; wait 400; click $SlotX $SlotY"
 $t0 = Get-Date
 if ($Launch2Y -gt 0) {
   Start-Sleep -Milliseconds ([int]($Launch2At * 1000))

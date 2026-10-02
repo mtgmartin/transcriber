@@ -5,7 +5,7 @@ param([double]$Seconds = 10, [string]$Shot, [switch]$NoClear, [switch]$NoPlay, [
 $inp = Join-Path $PSScriptRoot "input.ps1"
 $ms = [int]($Seconds * 1000)
 $steps = @("wait 100")
-if (-not $NoClear) { $steps += "click 1478 206" }
+
 $steps += "click 1136 60; click 1136 60; wait 300; click 1292 206; wait 400"
 if (-not $NoPlay) { $steps += "click 1114 60; wait $ms; click 1136 60; wait 1500" }
 if ($Extra) { $steps += $Extra }
