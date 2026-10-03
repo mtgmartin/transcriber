@@ -278,8 +278,38 @@ std::vector<TabNote> placeChord (std::vector<int> pitches, const std::vector<Tab
     return notes;
 }
 
+// The tab staff has the same events as the notation staff. Every tab node gets the id of its notation node plus "-t", so
+// the ids stay the same when an edit writes the tab again (and a selection survives it).
+static void deriveTabIds (const Node& notation, Node& tab)
+{
+    for (size_t i = 0; i < tab.children.size() && i < notation.children.size(); ++i)
+    {
+        std::vector<const Node*> nl;
+        std::vector<Node*> tl;
+
+        for (const auto& c : notation.children[i].children) if (c.type == nodeType::layer) nl.push_back (&c);
+        for (auto& c : tab.children[i].children) if (c.type == nodeType::layer) tl.push_back (&c);
+
+        for (size_t l = 0; l < nl.size() && l < tl.size(); ++l)
+        {
+            tl[l]->id = nl[l]->id + "-t";
+
+            for (size_t k = 0; k < nl[l]->children.size() && k < tl[l]->children.size(); ++k)
+            {
+                const auto& n = nl[l]->children[k];
+                auto& t = tl[l]->children[k];
+                t.id = n.id + "-t";
+
+                for (size_t j = 0; j < n.children.size() && j < t.children.size(); ++j)
+                    t.children[j].id = n.children[j].id + "-t";
+            }
+        }
+    }
+}
+
 //==============================================================================
-TranscriptionResult transcribeFretted (const ResolvedCapture& capture, const TranscriptionSettings& settings, InstrumentType type)
+TranscriptionResult transcribeFretted (
+const ResolvedCapture& capture, const TranscriptionSettings& settings, InstrumentType type)
 {
     TranscriptionResult result;
     auto& report = result.report;
@@ -449,6 +479,8 @@ TranscriptionResult transcribeFretted (const ResolvedCapture& capture, const Tra
 
         part.children.push_back (std::move (staffNode));
     }
+
+    deriveTabIds (part.children[0], part.children[1]);
 
     finishScore (result, std::move (part), type == InstrumentType::bass ? "transcribeBass" : "transcribeGuitar",
                  std::move (bars), notes, true);

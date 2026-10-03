@@ -247,8 +247,9 @@
     const group = target.closest("g.tabGrp");
     const tabChord = group && group.querySelectorAll("g.note").length > 1 ? group : null;
     const current = selectedId ? holder.querySelector('[id="' + selectedId.replace(/"/g, '\\"') + '"]') : null;
-    const sameChord = chord && (selectedId === chord.id || (current && chord.contains(current)));
-    select(sameChord && target.classList.contains("note") ? target.id : (chord || tabChord || target).id);
+    const together = chord || tabChord;
+    const sameChord = together && (selectedId === together.id || (current && together.contains(current)));
+    select(sameChord && target.classList.contains("note") ? target.id : (together || target).id);
   });
 
   // The selection: a click, or the editor (after it made a new note, or to ask again what the selected one is).

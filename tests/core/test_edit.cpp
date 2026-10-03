@@ -770,6 +770,17 @@ static void testGuitarEdits()
     CHECK_STR (tabLine (s.score).c_str(), "6:0 5:0 4:0 [3:0 2:0]");
     CHECK_STR (tabProblems (s.score).c_str(), "");
 
+    // the tab nodes have the ids of their notation nodes plus "-t" from the start, so they do not change with an edit or its undo
+    const auto tabIdBefore = idOf (s.score, 1, 2);
+    CHECK_STR (tabIdBefore.c_str(), (idOf (s.score, 1) + "-t").c_str());
+    CHECK_STR (events (s.score, 2)[3]->children[0].id.c_str(), (events (s.score, 1)[3]->children[0].id + "-t").c_str());
+    CHECK (s.run (req ("pitch", idOf (s.score, 1), "semitones", 1)).ok);
+    CHECK_STR (idOf (s.score, 1, 2).c_str(), tabIdBefore.c_str());
+    CHECK (s.undo.undo());
+    CHECK_STR (idOf (s.score, 1, 2).c_str(), tabIdBefore.c_str());
+    CHECK (s.undo.redo());
+    CHECK (s.undo.undo());
+
     // a pitch change in the notation moves the note in the tab
     CHECK (s.run (req ("pitch", idOf (s.score, 1), "semitones", 1)).ok);
     CHECK_STR (tabLine (s.score).c_str(), "6:0 5:1 4:0 [3:0 2:0]");
