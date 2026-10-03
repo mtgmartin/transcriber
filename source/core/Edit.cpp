@@ -61,6 +61,25 @@ namespace
         return total;
     }
 
+    // The note value (and dots) a length is written with, when it is one single value.
+    bool singleValueOf (int64_t ticks, int& dur, int& dots)
+    {
+        for (int d = 1; d <= 128; d *= 2)
+        {
+            for (int k = 0; k <= 2; ++k)
+            {
+                if (valueTicks (d, k) == ticks)
+                {
+                    dur = d;
+                    dots = k;
+                    return true;
+                }
+            }
+        }
+
+        return false;
+    }
+
     int letterIndex (char step)
     {
         const auto at = std::string ("CDEFGAB").find (step);
@@ -1847,6 +1866,7 @@ namespace
         int loc = 5;
         std::string head = "normal";
         int voice = 1;
+        bool forced = false;   // the user chose the voice (otherwise it is the one of the drum map)
     };
 
     bool drumFrom (const Json& j, DrumSpec& d)
@@ -1859,11 +1879,12 @@ namespace
         d.loc = (int) j.get ("loc").asInt();
         d.head = j.get ("head").asString();
         d.voice = (int) j.get ("voice").asInt (1);
+        d.forced = j.get ("force").asBool (false);
 
         if (d.head.empty())
             d.head = "normal";
 
-        return d.note >= 0 && d.note <= 127 && d.loc >= -6 && d.loc <= 16 && d.voice >= 1 && d.voice <= 2
+        return d.note >= 0 && d.note <= 127 && d.loc >= -6 && d.loc <= 16 && d.voice >= 1 && d.voice <= 4
                && (d.head == "normal" || d.head == "x" || d.head == "open-x" || d.head == "diamond") && d.name.size() <= 40;
     }
 
@@ -1911,7 +1932,7 @@ namespace
     // Adds a drum at the time of the selected note or rest: in the voice of the drum (hands 1, feet 2), as a note of the
     // chord there if a hit is already there, or in the rest. A new hit is as long as the first note value that fits
     // before the end of its beat.
-    EditResult addDrum (Edit& e, const DrumSpec& d)
+    EditResult addDrum (Edit& e, const DrumSpec& d, int64_t wantedTicks = 0)
     {
         const auto t = e.event().prop ("onset").asInt();
         auto& measure = e.measure();
@@ -2013,12 +2034,26 @@ namespace
         if (pieces.empty())
             return fail ("There is no room for a drum there.");
 
-        note.props["dur"] = Json (pieces.front().dur);
+        int hitDur = pieces.front().dur, hitDots = pieces.front().dots;
+        auto length = pieces.front().ticks;
 
-        if (pieces.front().dots > 0)
-            note.props["dots"] = Json (pieces.front().dots);
+        // (a hit that is moved from another voice keeps its length when that is one note value and fits)
+        if (wantedTicks > 0 && wantedTicks <= room)
+        {
+            int wantedDur = 0, wantedDots = 0;
 
-        const auto length = pieces.front().ticks;
+            if (singleValueOf (wantedTicks, wantedDur, wantedDots))
+            {
+                hitDur = wantedDur;
+                hitDots = wantedDots;
+                length = wantedTicks;
+            }
+        }
+
+        note.props["dur"] = Json (hitDur);
+
+        if (hitDots > 0)
+            note.props["dots"] = Json (hitDots);
         const auto rest = slot;
         std::vector<Slot> out;
 
@@ -2061,7 +2096,101 @@ namespace
         return success ("Drum added.", note.id);
     }
 
-    // The selected note becomes another drum (the same voice); a chord: click one of its notes.
+    // The selected hit (one note of a chord: click it a second time) moves to another voice of its measure, with the drum, the
+    // length where it fits, and the ghost note mark. `spec` may be another drum (the voice and the drum change together).
+    EditResult moveDrum (Edit& e, int voice, const DrumSpec* other = nullptr)
+    {
+        if (voice < 1 || voice > 4)
+            return fail ("A voice from 1 to 4 is needed.");
+
+        auto& event = e.event();
+
+        if (event.type == nodeType::rest)
+            return fail ("Select a hit first.");
+
+        if (inTuplet (event))
+            return fail ("A hit inside a triplet cannot change voice yet.");
+
+        if (e.layer().prop ("n").asInt (1) == voice && other == nullptr)
+            return fail ("It is already in voice " + std::to_string (voice) + ".");
+
+        auto targets = e.targets();
+
+        if (targets.size() != 1)
+            return fail ("A chord has several drums. Click one of its notes a second time to move just that one.");
+
+        const auto& note = *targets.front();
+        DrumSpec d;
+
+        if (other != nullptr)
+        {
+            d = *other;
+        }
+        else
+        {
+            d.note = midiOf (note);
+            d.name = note.prop ("drum").asString();
+            d.loc = (int) note.prop ("loc").asInt();
+            d.head = note.prop ("head").asString().empty() ? "normal" : note.prop ("head").asString();
+        }
+
+        d.voice = voice;
+        const bool ghost = note.prop ("ghost").asBool();
+        const auto length = event.prop ("ticks").asInt();
+        const auto layerId = e.layer().id;
+        const auto eventId = event.id;
+        const auto onset = event.prop ("onset").asInt();
+
+        // out of its place (a rest, or one note less in the chord) ...
+        auto taken = deleteNote (e);
+
+        if (! taken.ok)
+            return taken;
+
+        // ... and in the other voice at the same time (the layer may have moved: it is found again)
+        auto& layers = e.measure().children;
+
+        for (size_t l = 0; l < layers.size(); ++l)
+        {
+            if (layers[l].type == nodeType::layer && layers[l].id == layerId)
+            {
+                e.li = l;
+
+                for (size_t i = 0; i < layers[l].children.size(); ++i)
+                {
+                    const auto& n = layers[l].children[i];
+
+                    if (n.id == eventId || (n.prop ("onset").asInt() <= onset && onset < n.prop ("onset").asInt() + n.prop ("ticks").asInt()))
+                        e.ei = i;
+                }
+            }
+        }
+
+        e.noteId.clear();
+        auto added = addDrum (e, d, length);
+
+        if (! added.ok)
+            return added;
+
+        // the ghost note mark goes with the hit
+        if (ghost)
+        {
+            for (auto& layer : e.measure().children)
+                for (auto& ev : layer.children)
+                {
+                    if (ev.id == added.select)
+                        ev.props["ghost"] = Json (true);
+
+                    for (auto& n : ev.children)
+                        if (n.id == added.select)
+                            n.props["ghost"] = Json (true);
+                }
+        }
+
+        return success (other != nullptr ? "Drum changed, in voice " + std::to_string (voice) + "." : "Moved to voice " + std::to_string (voice) + ".", added.select);
+    }
+
+    // The selected note becomes another drum (the same voice, or the voice the user chose); a chord: click one of its notes.
     EditResult setDrum (Edit& e, const DrumSpec& d)
     {
         auto& event = e.event();
@@ -2074,17 +2203,16 @@ namespace
         if (targets.size() != 1)
             return fail ("A chord has several drums. Click one of its notes a second time to select just that one.");
 
-        int layers = 0;
-
-        for (const auto& c : e.measure().children)
-            if (c.type == nodeType::layer)
-                ++layers;
-
-        if (layers > 1 && e.layer().prop ("n").asInt (1) != d.voice)
-            return fail (d.voice == 1 ? "That drum is played with the hands: delete this hit and add the drum there."
-                                      : "That drum is played with the feet: delete this hit and add the drum there.");
-
         auto& note = *targets.front();
+
+        // the user chose another voice: the hit moves there as the new drum
+        if (d.forced && e.layer().prop ("n").asInt (1) != d.voice)
+        {
+            if (midiOf (note) == d.note)
+                return moveDrum (e, d.voice);
+
+            return moveDrum (e, d.voice, &d);
+        }
 
         if (midiOf (note) == d.note)
             return fail ("It is that drum already.");
@@ -2444,25 +2572,6 @@ namespace
     //==========================================================================
     // Grace notes (Phase 8d)
 
-    // The note value (and dots) a length is written with, when it is one single value.
-    bool singleValueOf (int64_t ticks, int& dur, int& dots)
-    {
-        for (int d = 1; d <= 128; d *= 2)
-        {
-            for (int k = 0; k <= 2; ++k)
-            {
-                if (valueTicks (d, k) == ticks)
-                {
-                    dur = d;
-                    dots = k;
-                    return true;
-                }
-            }
-        }
-
-        return false;
-    }
-
     // The selected note or chord becomes a grace note of the note or chord after it ("acc" with a slash, "app" without), or a
     // normal note again ("none", or the same mode again). A grace note has no time: the time of the note becomes a rest (the note
     // before it can be made longer); a grace note that becomes a normal note takes a 16th (or what is there) from the rest in front
@@ -2619,6 +2728,13 @@ namespace
         {
             label = op;
             result = fail ("A grace note has no length: make it a normal note first (the Normal note button), or select the note it stands before.");
+            return true;
+        }
+
+        if (op == "voice" && isPercStaff (*e.staff))
+        {
+            label = "Change voice";
+            result = moveDrum (e, (int) request.get ("voice").asInt());
             return true;
         }
 
@@ -3529,7 +3645,7 @@ namespace
                 drumScore = true;
 
         // what only pitched music has
-        static const char* const notForDrums[] = { "pitch", "letter", "interval", "respell", "key", "stem", "voice", "slur", "hairpin" };
+        static const char* const notForDrums[] = { "pitch", "letter", "interval", "respell", "key", "stem", "slur", "hairpin" };
 
         if (drumScore)
             for (const auto* name : notForDrums)

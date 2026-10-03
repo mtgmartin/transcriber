@@ -21,7 +21,7 @@ struct DrumEntry
     std::string name = "Kick";
     int loc = 1;                // staff position as in MEI @loc: 0 = bottom line, 1 = first space, ... 8 = top line, 9 = space above, 10 = first ledger line above, -1 = space below
     std::string head = "normal";   // "normal", "x", "open-x" (open hi-hat), "diamond"
-    int voice = 2;              // 1 = hands (stems up), 2 = feet (stems down)
+    int voice = 2;              // 1-4: the layer of the hit (1 = stems up, 2 = stems down, 3 and 4 as 1 and 2); the usual map has hands in 1 and feet in 2, but any drum can be in any voice
     int ghostBelow = 0;         // hits softer than this velocity are written as ghost notes in brackets; 0 = never
 
     Json toJson() const;

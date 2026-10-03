@@ -314,7 +314,7 @@ namespace
         CHECK_EQ ((int) result.entries.size(), 1);
         CHECK_EQ (result.entries[0].loc, 16);
         CHECK_STR (result.entries[0].head.c_str(), "normal");
-        CHECK_EQ (result.entries[0].voice, 2);
+        CHECK_EQ (result.entries[0].voice, 4);   // voices go up to 4: 7 is brought back to 4
         CHECK_EQ (result.entries[0].ghostBelow, 0);
         CHECK_STR (result.name.c_str(), "Drum map");
     }

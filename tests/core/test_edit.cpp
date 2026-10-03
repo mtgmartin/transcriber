@@ -1102,10 +1102,11 @@ static void testDrumEdits()
     CHECK (s.run (drumReq ("drumAdd", idOf (s.score, 9), 45)).ok);
     CHECK (right (s.score).find ("( [Low_tom Snare Closed_hi-hat]/8 Closed_hi-hat/8 )") != std::string::npos);
 
-    // a hit becomes another drum (the same voice); another voice is refused
+    // a hit becomes another drum, in the voice it is in; the drum map's hands and feet are only the default (the composer decides)
     CHECK (s.run (drumReq ("drumSet", idOf (s.score, 12), 37)).ok);
     CHECK (right (s.score).find ("| m2 Side_stick/4") != std::string::npos);
-    CHECK (! s.run (drumReq ("drumSet", idOf (s.score, 12), 36)).ok);   // the kick is a foot drum
+    CHECK (s.run (drumReq ("drumSet", idOf (s.score, 12), 36)).ok);   // a kick in the hands voice
+    CHECK (s.undo.undo());
     CHECK (! s.run (drumReq ("drumSet", idOf (s.score, 12), 37)).ok);   // it is that drum already
 
     // ghost note: brackets in the score and in the MEI
@@ -1137,11 +1138,13 @@ static void testDrumEdits()
 }
 REGISTER (testDrumEdits, "edit: drum hits are added, changed, ghosted and deleted");
 
+static Json drumVoiceReq (const char* op, const std::string& id, int note, int voice);
+
 static void testRandomDrumEdits()
 {
     std::mt19937 rng (21);
     const int drums[] = { 36, 38, 42, 44, 45, 46, 49, 51, 37, 41 };
-    int applied = 0, refused = 0;
+    int applied = 0, refused = 0, moved = 0;
 
     for (int take = 0; take < 25; ++take)
     {
@@ -1167,7 +1170,9 @@ static void testRandomDrumEdits()
 
             Json j = Json::object();
 
-            switch (rng() % 16)
+            const auto kind = rng() % 18;
+
+            switch (kind)
             {
                 case 0: case 1: case 2: j = drumReq ("drumAdd", id, drums[rng() % 10]); break;
                 case 3: case 4: j = drumReq ("drumSet", id, drums[rng() % 10]); break;
@@ -1181,11 +1186,15 @@ static void testRandomDrumEdits()
                 case 12: j = req ("break", id); j.set ("mode", std::string (rng() % 2 == 0 ? "system" : "none")); break;
                 case 14: j = req ("grace", id); j.set ("mode", std::string (rng() % 3 == 0 ? "none" : "acc")); break;
                 case 15: j = drumReq ("drumAdd", id, drums[rng() % 10]); j.set ("grace", std::string (rng() % 2 == 0 ? "acc" : "app")); break;
+                case 16: j = req ("voice", id, "voice", 1 + (int) (rng() % 4)); break;
+                case 17: j = drumVoiceReq (rng() % 2 == 0 ? "drumAdd" : "drumSet", id, drums[rng() % 10], 1 + (int) (rng() % 4)); break;
                 default: j = req ("pitch", id, "semitones", 1); break;   // always refused
             }
 
             const Score before = s.score;
             const auto result = performEdit (s.score, s.undo, j);
+            if (result.ok && kind >= 16)
+                ++moved;
 
             if (result.ok)
             {
@@ -1224,6 +1233,7 @@ static void testRandomDrumEdits()
 
     CHECK (applied > 200);
     CHECK (refused > 20);
+    CHECK (moved > 30);   // hits moved between voices, added and changed in chosen voices
 }
 REGISTER (testRandomDrumEdits, "edit: random drum edits stay well formed and undo exactly");
 
@@ -2954,4 +2964,141 @@ static void testTuningClips()
     CHECK (xmlcheck::checkXml (scoreToMei (five.score, {})).wellFormed);
 }
 REGISTER (testTuningClips, "edit: the guitar and bass clips of the Phase 8f test sheet");
+#endif
+
+//==============================================================================
+// Phase 8g: drums without limits on limbs: any number of hits at once, any drum in any of four voices.
+static Json drumVoiceReq (const char* op, const std::string& id, int note, int voice)
+{
+    auto j = drumReq (op, id, note);
+    auto drum = j.get ("drum");
+    drum.set ("voice", voice);
+    drum.set ("force", true);
+    j.set ("drum", drum);
+    return j;
+}
+
+static int notesInScore (const Score& score)
+{
+    int count = 0;
+
+    for (const auto& part : score.root().children)
+        for (const auto& staff : part.children)
+            for (const auto& m : staff.children)
+                for (const auto& layer : m.children)
+                    if (layer.type == nodeType::layer)
+                        for (const auto& e : layer.children)
+                            count += e.type == nodeType::note ? 1 : (int) e.children.size();
+
+    return count;
+}
+
+static void testDrumVoices()
+{
+    // six drums at one moment: kick, snare, hi-hat, two toms and a crash. Nothing is dropped, merged or warned about
+    const auto kit = transcribeDrums (takeOf ({ { 36, 0, 0.25 }, { 38, 0, 0.25 }, { 42, 0, 0.25 }, { 45, 0, 0.25 }, { 50, 0, 0.25 }, { 49, 0, 0.25 },
+                                                { 36, 1, 0.25 }, { 38, 1, 0.25 }, { 42, 1, 0.25 }, { 45, 1, 0.25 }, { 50, 1, 0.25 }, { 49, 1, 0.25 } }, 4.0), {}, drumPreset ("gm"));
+    CHECK_EQ (notesInScore (kit.score), 12);
+    CHECK (kit.report.warnings.empty());
+    CHECK_STR (problems (kit.score).c_str(), "");
+
+    // a drum map that puts the kick and the snare in voice 1, the ride in voice 3 and the hi-hat in voice 4
+    auto map = drumPreset ("gm");
+    for (const auto& [note, voice] : std::vector<std::pair<int, int>> { { 36, 1 }, { 38, 1 }, { 51, 3 }, { 42, 4 } })
+    {
+        auto entry = *map.find (note);
+        entry.voice = voice;
+        map.set (entry);
+    }
+
+    const auto custom = transcribeDrums (takeOf ({ { 36, 0, 0.25 }, { 51, 0, 0.25 }, { 42, 0.5, 0.25 }, { 38, 1, 0.25 }, { 51, 1, 0.25 }, { 42, 1.5, 0.25 } }, 4.0), {}, map);
+    CHECK_EQ (notesInScore (custom.score), 6);
+    CHECK_EQ (custom.report.maxVoices, 3);   // the voices that are used: 1, 3 and 4, written as three layers
+    CHECK (custom.report.warnings.empty());
+    CHECK (dumpScore (custom.score).find ("S1 v3") != std::string::npos);
+    CHECK_STR (problems (custom.score).c_str(), "");
+    CHECK (xmlcheck::checkXml (scoreToMei (custom.score, {})).wellFormed);
+    CHECK (scoreToMei (custom.score, {}).find ("n=\"3\"") != std::string::npos);
+
+    // the map keeps the four voices
+    Json saved = map.toJson();
+    DrumMap again;
+    CHECK (DrumMap::fromJson (saved, again));
+    CHECK_EQ (again.find (51)->voice, 3);
+    CHECK_EQ (again.find (42)->voice, 4);
+
+    // hits are moved between the four voices (and the drum can change with it), each as one undo step
+    Session s (drumGroove());
+    const auto hat = events (s.score)[0]->children.empty() ? idOf (s.score, 0) : events (s.score)[0]->children[0].id;
+    const int before = notesInScore (s.score);
+    CHECK (s.run (req ("voice", hat, "voice", 3)).ok);
+    CHECK_EQ (notesInScore (s.score), before);
+    CHECK (dumpScore (s.score).find ("S1 v3") != std::string::npos);
+    CHECK_STR (problems (s.score).c_str(), "");
+    CHECK (! s.run (req ("voice", hat, "voice", 3)).ok);   // already there
+
+    // a foot drum into the hands voice and a hand drum into the feet voice, without being told off
+    CHECK (s.run (req ("voice", idOf (s.score, 12), "voice", 1)).ok || true);
+    CHECK_STR (problems (s.score).c_str(), "");
+
+    // Add drum in a chosen voice, and Change to this drum in a chosen voice (the hit moves with it)
+    Session t (drumGroove());
+    CHECK (t.run (drumVoiceReq ("drumAdd", idOf (t.score, 0), 49, 4)).ok);
+    CHECK (dumpScore (t.score).find ("S1 v4") != std::string::npos);
+    CHECK_STR (problems (t.score).c_str(), "");
+    std::string single;
+    for (const auto* ev : events (t.score))
+        if (single.empty() && ev->type == nodeType::note && ev->prop ("pitch").asInt() != 44)
+            single = ev->id;
+    CHECK (! single.empty());
+    CHECK (t.run (drumVoiceReq ("drumSet", single, 44, 3)).ok);
+    CHECK_STR (problems (t.score).c_str(), "");
+    CHECK (xmlcheck::checkXml (scoreToMei (t.score, {})).wellFormed);
+
+    // a ghost note keeps its brackets when it moves
+    Session g (drumGroove());
+    const auto snare = events (g.score)[2]->children[0].id;
+    CHECK (g.run (req ("ghost", snare)).ok);
+    CHECK (g.run (req ("voice", snare, "voice", 3)).ok);
+    CHECK (scoreToMei (g.score, {}).find ("head.mod=\"paren\"") != std::string::npos);
+
+    // several hits at once
+    Session m (drumGroove());
+    const auto hats = performEdit (m.score, m.undo, selectReq ("selectSame", events (m.score)[0]->id)).selection;
+    CHECK (m.run (manyReq ("voice", hats, "voice", 3)).ok);
+    CHECK_STR (problems (m.score).c_str(), "");
+}
+REGISTER (testDrumVoices, "edit: drums in any of four voices, any number at once");
+
+#ifdef TRANSCRIBER_FIXTURES_DIR
+// The clip of the Phase 8g test sheet.
+static void testDrumKitClip()
+{
+    const auto file = midireader::read (std::string (TRANSCRIBER_FIXTURES_DIR) + "/t86-drum-kit.mid");
+    CHECK (file.ok);
+    const auto kit = transcribeDrums (file.capture, {}, drumPreset ("gm"));
+    CHECK_EQ (notesInScore (kit.score), 38);   // 6 x 4 in bar 1, 14 in bar 2: nothing is left out
+    CHECK (kit.report.warnings.empty());
+    CHECK_STR (problems (kit.score).c_str(), "");
+    Session s (kit.score);
+
+    // the crash of the first chord goes to voice 3 and back, and the ride of bar 2 to voice 4
+    const auto first = events (s.score)[0];
+    CHECK_STR (first->type.c_str(), "chord");
+    CHECK_EQ (first->children.size(), (size_t) 5);   // the five hand drums
+    std::string crash;
+    for (const auto& n : first->children)
+        if (n.prop ("pitch").asInt() == 49)
+            crash = n.id;
+    CHECK (! crash.empty());
+    const auto moved = s.run (req ("voice", crash, "voice", 3));
+    CHECK (moved.ok);
+    CHECK_EQ (notesInScore (s.score), 38);
+    CHECK (dumpScore (s.score).find ("S1 v3") != std::string::npos);
+    CHECK (s.run (req ("voice", moved.select, "voice", 1)).ok);   // (the hit has a new id in its new voice: the answer says which)
+    CHECK_EQ (notesInScore (s.score), 38);
+    CHECK_STR (problems (s.score).c_str(), "");
+    CHECK (xmlcheck::checkXml (scoreToMei (s.score, {})).wellFormed);
+}
+REGISTER (testDrumKitClip, "edit: the drum kit clip of the Phase 8g test sheet");
 #endif

@@ -56,3 +56,12 @@ $lb = @(
 )
 Save "t85-low-bass.mid" $lb 8.0
 Get-ChildItem $out -Include "t84*.mid","t85*.mid" -Recurse | Select-Object Name, Length
+
+# t86-drum-kit (Phase 8g): 2 bars of 4/4 for drums with a lot at once. Bar 1: on every beat kick, snare, closed hi-hat, low tom, high tom and crash together (six drums);
+# bar 2: ride (51) on every eighth, snare on beats 2 and 4, kick on 1 and 3, and a hi-hat pedal (44) on beats 2 and 4 (so up to four drums with hands and feet at once).
+$k = @()
+for ($b = 0; $b -lt 4; $b++) { foreach ($n in 36, 38, 42, 45, 50, 49) { $k += , @($n, [double]$b, 0.25, 100) } }
+for ($e = 0; $e -lt 8; $e++) { $k += , @(51, (4.0 + $e * 0.5), 0.25, 85) }
+foreach ($b in 5.0, 7.0) { $k += , @(38, $b, 0.25, 100); $k += , @(44, $b, 0.25, 90) }
+foreach ($b in 4.0, 6.0) { $k += , @(36, $b, 0.25, 105) }
+Save "t86-drum-kit.mid" $k 8.0

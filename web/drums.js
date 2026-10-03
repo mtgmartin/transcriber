@@ -93,8 +93,10 @@
     cell(head);
 
     const voice = document.createElement("select");
-    voice.appendChild(option("1", "Hands (stems up)"));
-    voice.appendChild(option("2", "Feet (stems down)"));
+    voice.appendChild(option("1", "Voice 1 (stems up; hands)"));
+    voice.appendChild(option("2", "Voice 2 (stems down; feet)"));
+    voice.appendChild(option("3", "Voice 3 (stems up)"));
+    voice.appendChild(option("4", "Voice 4 (stems down)"));
     voice.value = String(entry.voice);
     voice.addEventListener("change", function () { entry.voice = parseInt(voice.value, 10); });
     cell(voice);

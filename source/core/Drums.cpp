@@ -129,7 +129,9 @@ TranscriptionResult transcribeDrums (const ResolvedCapture& capture, const Trans
         staff.voices.push_back (std::move (events));
     }
 
-    // The hands are voice 1 and the feet voice 2; a part with only feet (a kick drum track) is one voice.
+    // The voices are the ones the drum map names (hands 1 and feet 2 in the usual map, up to four); the voices that are used are
+    // written in order as layers (a part with only feet, a kick drum track, is one voice). Nothing is counted or refused here: how
+    // many drums sound together, and in how many voices, is up to the composer.
     report.maxVoices = (int) staff.voices.size();
 
     if (! unmapped.empty())

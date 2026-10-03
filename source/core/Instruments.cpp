@@ -362,7 +362,7 @@ DrumEntry DrumEntry::fromJson (const Json& j)
     const auto head = j.get ("head").asString (e.head);
     e.head = head == "x" || head == "open-x" || head == "diamond" ? head : "normal";
 
-    e.voice = j.get ("voice").asInt (e.voice) == 1 ? 1 : 2;
+    e.voice = std::max (1, std::min (4, (int) j.get ("voice").asInt (e.voice)));   // any of the four voices: the composer decides
     e.ghostBelow = std::max (0, std::min (127, (int) j.get ("ghostBelow").asInt (0)));
     return e;
 }

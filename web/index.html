@@ -171,10 +171,20 @@
     <div class="row" id="edit-bar5" data-show="drums" hidden>
       <span class="dim">Drums</span>
       <select id="ed-drum" title="A drum of the drum map in use" disabled><option value="">choose a drum</option></select>
-      <button type="button" data-op="drumAdd" title="Put this drum at the selected note or rest (the hands or the feet voice, as the map says)" disabled>Add drum</button>
+      <label for="ed-drum-voice" class="dim">in voice</label>
+      <select id="ed-drum-voice" title="The voice of the new hit: the one the drum map says, or any of the four (hands, feet, or more: the composer decides)" disabled>
+        <option value="">as the map says</option><option value="1">1</option><option value="2">2</option><option value="3">3</option><option value="4">4</option>
+      </select>
+      <button type="button" data-op="drumAdd" title="Put this drum at the selected note or rest, in the voice chosen (or the one of the drum map)" disabled>Add drum</button>
       <button type="button" data-op="drumSet" title="Change the selected hit to this drum" disabled>Change to this drum</button>
       <button type="button" data-op="drumAdd" data-grace="acc" title="Put this drum in front of the selected hit as a small grace note (a flam)" disabled>Add as grace note</button>
       <button type="button" data-op="ghost" title="Write the selected hit as a ghost note (in brackets), or not" disabled>Ghost note</button>
+      <span class="sep"></span>
+      <span class="dim">Move to voice</span>
+      <button type="button" data-op="voice" data-voice="1" title="Move the selected hit to voice 1 (stems up)" disabled>1</button>
+      <button type="button" data-op="voice" data-voice="2" title="Move the selected hit to voice 2 (stems down)" disabled>2</button>
+      <button type="button" data-op="voice" data-voice="3" title="Move the selected hit to voice 3" disabled>3</button>
+      <button type="button" data-op="voice" data-voice="4" title="Move the selected hit to voice 4" disabled>4</button>
     </div>
     <p id="edit-msg" class="result"></p>
     <p id="edited-note" class="dim" hidden>You have edited this score, so the reading and the notation settings are locked.

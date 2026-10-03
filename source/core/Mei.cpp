@@ -486,7 +486,7 @@ namespace
                     attribute (s, "head.mod", "paren");
 
                 if (withDuration)
-                    attribute (s, "stem.dir", layerNumber == 1 ? "up" : "down");
+                    attribute (s, "stem.dir", layerNumber % 2 == 1 ? "up" : "down");
 
                 if (withDuration && n.has ("artic"))
                     attribute (s, "artic", n.prop ("artic").asString());
@@ -587,7 +587,7 @@ namespace
                 graceAttribute (s, e);
 
                 if (kind == "perc")
-                    attribute (s, "stem.dir", layerNumber == 1 ? "up" : "down");
+                    attribute (s, "stem.dir", layerNumber % 2 == 1 ? "up" : "down");
                 else if (e.has ("stem"))
                     attribute (s, "stem.dir", e.prop ("stem").asString());
 

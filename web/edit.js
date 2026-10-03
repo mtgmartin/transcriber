@@ -47,6 +47,7 @@
 
     $("ed-interval").disabled = !can;
     $("ed-drum").disabled = !(hasScore && !edit.blocked && status.state !== "recording");
+    $("ed-drum-voice").disabled = $("ed-drum").disabled;
     $("ed-dyn").disabled = !can;
     $("ed-span").disabled = !can;
     $("ed-perline").disabled = $("ed-spacing").disabled = !(hasScore && !edit.blocked && status.state !== "recording");
@@ -116,7 +117,9 @@
     if (request.op === "drumAdd" || request.op === "drumSet") {
       const entry = selectedDrum();
       if (!entry) { say("Choose a drum in the list first.", true); b.blur(); return; }
-      request.drum = { note: entry.note, name: entry.name, loc: entry.loc, head: entry.head, voice: entry.voice };
+      // the voice: the one the user chose in the list, or the one of the drum map
+      const chosen = parseInt($("ed-drum-voice").value, 10);
+      request.drum = { note: entry.note, name: entry.name, loc: entry.loc, head: entry.head, voice: chosen || entry.voice, force: !!chosen };
     }
 
     run(request);
