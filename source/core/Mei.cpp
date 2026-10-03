@@ -456,6 +456,9 @@ namespace
 
                 if (withDuration)
                     attribute (s, "stem.dir", layerNumber == 1 ? "up" : "down");
+
+                if (withDuration && n.has ("artic"))
+                    attribute (s, "artic", n.prop ("artic").asString());
             }
             else
             {
@@ -553,7 +556,7 @@ namespace
                 else if (e.has ("stem"))
                     attribute (s, "stem.dir", e.prop ("stem").asString());
 
-                if (kind != "perc" && e.has ("artic"))
+                if (e.has ("artic"))
                     attribute (s, "artic", e.prop ("artic").asString());
 
                 out += pad + s + ">\n";

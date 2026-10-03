@@ -106,3 +106,7 @@ button.danger { background: #5a2323; border-color: #f08a8a; }
 #edit-bar4 { margin: 8px 0 0; gap: 6px; align-items: center; }
 #edit-bar4 .sep { width: 1px; align-self: stretch; background: var(--rule); margin: 0 4px; }
 #edit-bar4 button { padding: 3px 9px; }
+.grp { display: contents; }
+.grp[hidden] { display: none; }
+#edit-bar5 { margin: 8px 0 0; gap: 6px; align-items: center; }
+#edit-bar5[hidden] { display: none; }

@@ -10,6 +10,7 @@
   const bar2 = $("edit-bar2");
   const bar3 = $("edit-bar3");
   const bar4 = $("edit-bar4");
+  const bar5 = $("edit-bar5");
   const message = $("edit-msg");
   let status = null;
   let timer = null;
@@ -31,7 +32,11 @@
     const hasScore = !!edit;
     const can = hasScore && !edit.blocked && selected() !== "" && status.state !== "recording";
 
-    [bar, bar2, bar3, bar4].forEach(function (row) {
+    // what the instrument has: piano all, guitar and bass the tab string, drums the drum row
+    const instrument = (status && status.instrument) || "piano";
+    document.querySelectorAll("[data-show]").forEach(function (el) { el.hidden = el.dataset.show.split(" ").indexOf(instrument) < 0; });
+
+    [bar, bar2, bar3, bar4, bar5].forEach(function (row) {
       row.querySelectorAll("button[data-op]").forEach(function (b) {
         const op = b.dataset.op;
         b.disabled = op === "undo" ? !(hasScore && edit.canUndo)
@@ -41,6 +46,7 @@
     });
 
     $("ed-interval").disabled = !can;
+    $("ed-drum").disabled = !(hasScore && !edit.blocked && status.state !== "recording");
     $("ed-dyn").disabled = !can;
     $("ed-span").disabled = !can;
     $("ed-perline").disabled = $("ed-spacing").disabled = !(hasScore && !edit.blocked && status.state !== "recording");
@@ -98,6 +104,13 @@
     if (request.op === "tempo-dialog") { askTempo(); b.blur(); return; }
 
     if (request.op === "interval") request.interval = parseInt($("ed-interval").value, 10);
+
+    if (request.op === "drumAdd" || request.op === "drumSet") {
+      const entry = selectedDrum();
+      if (!entry) { say("Choose a drum in the list first.", true); b.blur(); return; }
+      request.drum = { note: entry.note, name: entry.name, loc: entry.loc, head: entry.head, voice: entry.voice };
+    }
+
     run(request);
     b.blur();
   }
@@ -106,6 +119,32 @@
   bar2.addEventListener("click", buttonClicked);
   bar3.addEventListener("click", buttonClicked);
   bar4.addEventListener("click", buttonClicked);
+  bar5.addEventListener("click", buttonClicked);
+
+  // the drums of the map in use (drums.js tells when they change)
+  function drumEntries() { return window.transcriberDrums ? window.transcriberDrums.entries() : []; }
+  function selectedDrum() { return drumEntries()[parseInt($("ed-drum").value, 10)] || null; }
+
+  function fillDrums() {
+    const select = $("ed-drum");
+    const keep = select.value;
+    select.textContent = "";
+    const first = document.createElement("option");
+    first.value = "";
+    first.textContent = "choose a drum";
+    select.appendChild(first);
+
+    drumEntries().forEach(function (entry, i) {
+      const o = document.createElement("option");
+      o.value = String(i);
+      o.textContent = entry.name + " (" + entry.note + ")";
+      select.appendChild(o);
+    });
+
+    select.value = keep && select.querySelector('option[value="' + keep + '"]') ? keep : "";
+  }
+
+  window.addEventListener("transcriber-drums", fillDrums);
 
   // the layout lists act at once, on the whole score
   $("ed-perline").addEventListener("change", function () {

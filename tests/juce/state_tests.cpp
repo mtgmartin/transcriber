@@ -634,11 +634,11 @@ namespace
         service.setTranscriptionSetting ("grid", 4);
         CHECK_EQ ((int) service.getStatus().getProperty ("settings", {}).getProperty ("grid", 0), 4);
 
-        // guitar scores are edited (the tab follows); drum scores are not edited yet
+        // guitar scores are edited (the tab follows), and so are drum scores
         service.setInstrument ("guitar");
         CHECK (service.getStatus().getProperty ("edit", {}).getProperty ("blocked", {}).toString().isEmpty());
         service.setInstrument ("drums");
-        CHECK (service.getStatus().getProperty ("edit", {}).getProperty ("blocked", {}).toString().isNotEmpty());
+        CHECK (service.getStatus().getProperty ("edit", {}).getProperty ("blocked", {}).toString().isEmpty());
     }
 
     struct Test { const char* name; void (*fn)(); };

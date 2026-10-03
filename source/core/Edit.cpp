@@ -1774,6 +1774,298 @@ namespace
         return any ? success ("Spacing changed.") : fail ("The spacing is that already.");
     }
 
+    //==========================================================================
+    // Drums: a hit is a note with a drum (the page sends the entry of the drum map).
+
+    struct DrumSpec
+    {
+        int note = 0;
+        std::string name;
+        int loc = 5;
+        std::string head = "normal";
+        int voice = 1;
+    };
+
+    bool drumFrom (const Json& j, DrumSpec& d)
+    {
+        if (! j.isObject() || ! j.get ("note").isNumber() || ! j.get ("loc").isNumber())
+            return false;
+
+        d.note = (int) j.get ("note").asInt();
+        d.name = j.get ("name").asString();
+        d.loc = (int) j.get ("loc").asInt();
+        d.head = j.get ("head").asString();
+        d.voice = (int) j.get ("voice").asInt (1);
+
+        if (d.head.empty())
+            d.head = "normal";
+
+        return d.note >= 0 && d.note <= 127 && d.loc >= -6 && d.loc <= 16 && d.voice >= 1 && d.voice <= 2
+               && (d.head == "normal" || d.head == "x" || d.head == "open-x" || d.head == "diamond") && d.name.size() <= 40;
+    }
+
+    Node drumNote (Score& score, const DrumSpec& d)
+    {
+        Node n = score.makeNode (nodeType::note);
+        n.props["pitch"] = Json (d.note);
+        n.props["drum"] = Json (d.name);
+        n.props["loc"] = Json (d.loc);
+        n.props["head"] = Json (d.head);
+        n.props["vel"] = Json (90);
+        return n;
+    }
+
+    // Low to high on the staff, as the transcription writes a chord.
+    void sortDrumChord (Node& chord)
+    {
+        std::stable_sort (chord.children.begin(), chord.children.end(), [] (const Node& a, const Node& b)
+        {
+            return a.prop ("loc").asInt() != b.prop ("loc").asInt() ? a.prop ("loc").asInt() < b.prop ("loc").asInt() : midiOf (a) < midiOf (b);
+        });
+    }
+
+    bool isPercStaff (const Node& staff)
+    {
+        return staff.prop ("kind").asString() == "perc" || staff.prop ("clef").asString() == "perc";
+    }
+
+    // The end of the beat group a time is in (as written in the measure), at most the end of the measure.
+    int64_t groupEndAfter (const Geometry& g, int64_t t)
+    {
+        int64_t at = 0;
+
+        for (const auto group : beatGroups (g.num, g.den, g.virtualLength))
+        {
+            at += group;
+
+            if (at - g.offset > t)
+                return std::min (at - g.offset, g.length);
+        }
+
+        return g.length;
+    }
+
+    // Adds a drum at the time of the selected note or rest: in the voice of the drum (hands 1, feet 2), as a note of the
+    // chord there if a hit is already there, or in the rest. A new hit is as long as the first note value that fits
+    // before the end of its beat.
+    EditResult addDrum (Edit& e, const DrumSpec& d)
+    {
+        const auto t = e.event().prop ("onset").asInt();
+        auto& measure = e.measure();
+        size_t li = measure.children.size();
+
+        for (size_t l = 0; l < measure.children.size(); ++l)
+            if (measure.children[l].type == nodeType::layer && measure.children[l].prop ("n").asInt (1) == d.voice)
+                li = l;
+
+        if (li == measure.children.size())
+        {
+            // the voice is not written in this measure yet: a layer of rest, in order of the voices
+            Node layer = e.score.makeNode (nodeType::layer);
+            layer.props["n"] = Json (d.voice);
+            Node rest = e.score.makeNode (nodeType::rest);
+            rest.props["onset"] = Json (0);
+            rest.props["ticks"] = Json (e.geometry.length);
+            rest.props["measureRest"] = Json (true);
+            layer.children.push_back (std::move (rest));
+
+            size_t at = 0;
+
+            for (size_t l = 0; l < measure.children.size(); ++l)
+                if (measure.children[l].type == nodeType::layer && measure.children[l].prop ("n").asInt (1) < d.voice)
+                    at = l + 1;
+
+            measure.children.insert (measure.children.begin() + (std::ptrdiff_t) at, std::move (layer));
+            li = at;
+        }
+
+        auto& layer = measure.children[li];
+        auto slots = slotsOf (layer, e.geometry);
+        size_t k = slots.size();
+
+        for (size_t i = 0; i < slots.size(); ++i)
+            if (slots[i].on <= t && t < slots[i].on + slots[i].len)
+                k = i;
+
+        if (k == slots.size())
+            return fail ("There is no room for a drum there.");
+
+        auto& slot = slots[k];
+        auto note = drumNote (e.score, d);
+
+        if (slot.node.type != nodeType::rest)
+        {
+            if (slot.on != t)
+                return fail ("A longer hit of this voice is there. Make it shorter first.");
+
+            auto& event = slot.node;
+            note.props["onset"] = event.prop ("onset");
+
+            if (event.type == nodeType::note)
+            {
+                if (midiOf (event) == d.note)
+                    return fail ("That drum is there already.");
+
+                Node chord = e.score.makeNode (nodeType::chord);
+
+                for (const auto* key : eventKeys)
+                    if (event.has (key))
+                        chord.props[key] = event.prop (key);
+
+                Node old = event;
+
+                for (const auto* key : eventKeys)
+                    old.props.erase (key);
+
+                old.props["onset"] = chord.prop ("onset");
+                chord.children.push_back (std::move (old));
+                chord.children.push_back (note);
+                event = std::move (chord);
+            }
+            else
+            {
+                for (const auto& n : event.children)
+                    if (midiOf (n) == d.note)
+                        return fail ("That drum is there already.");
+
+                event.children.push_back (note);
+            }
+
+            sortDrumChord (event);
+
+            if (! writeLayer (e.score, layer, e.geometry, std::move (slots)))
+                return fail ("The measure could not be written again.");
+
+            return success ("Drum added.", note.id);
+        }
+
+        if (inTuplet (slot.node))
+            return fail ("A drum cannot be added inside a triplet yet.");
+
+        // the rest: before it, the new hit, after it
+        const auto restEnd = slot.on + slot.len;
+        const auto room = std::min (restEnd, groupEndAfter (e.geometry, t)) - t;
+        const auto pieces = splitLength (t + e.geometry.offset, std::max<int64_t> (room, 1), e.geometry.num, e.geometry.den, e.geometry.virtualLength, {}, false);
+
+        if (pieces.empty())
+            return fail ("There is no room for a drum there.");
+
+        note.props["dur"] = Json (pieces.front().dur);
+
+        if (pieces.front().dots > 0)
+            note.props["dots"] = Json (pieces.front().dots);
+
+        const auto length = pieces.front().ticks;
+        const auto rest = slot;
+        std::vector<Slot> out;
+
+        for (size_t i = 0; i < slots.size(); ++i)
+        {
+            if (i != k)
+            {
+                out.push_back (slots[i]);
+                continue;
+            }
+
+            if (rest.on < t)
+            {
+                Slot before;
+                before.on = rest.on;
+                before.len = t - rest.on;
+                before.node.type = nodeType::rest;
+                out.push_back (std::move (before));
+            }
+
+            Slot hit;
+            hit.on = t;
+            hit.len = length;
+            hit.node = note;
+            out.push_back (std::move (hit));
+
+            if (t + length < restEnd)
+            {
+                Slot after;
+                after.on = t + length;
+                after.len = restEnd - t - length;
+                after.node.type = nodeType::rest;
+                out.push_back (std::move (after));
+            }
+        }
+
+        if (! writeLayer (e.score, layer, e.geometry, std::move (out)))
+            return fail ("The measure could not be written again.");
+
+        return success ("Drum added.", note.id);
+    }
+
+    // The selected note becomes another drum (the same voice); a chord: click one of its notes.
+    EditResult setDrum (Edit& e, const DrumSpec& d)
+    {
+        auto& event = e.event();
+
+        if (event.type == nodeType::rest)
+            return fail ("Select a hit first (or use Add drum on a rest).");
+
+        auto targets = e.targets();
+
+        if (targets.size() != 1)
+            return fail ("A chord has several drums. Click one of its notes a second time to select just that one.");
+
+        int layers = 0;
+
+        for (const auto& c : e.measure().children)
+            if (c.type == nodeType::layer)
+                ++layers;
+
+        if (layers > 1 && e.layer().prop ("n").asInt (1) != d.voice)
+            return fail (d.voice == 1 ? "That drum is played with the hands: delete this hit and add the drum there."
+                                      : "That drum is played with the feet: delete this hit and add the drum there.");
+
+        auto& note = *targets.front();
+
+        if (midiOf (note) == d.note)
+            return fail ("It is that drum already.");
+
+        if (event.type == nodeType::chord)
+            for (const auto& n : event.children)
+                if (midiOf (n) == d.note)
+                    return fail ("That drum is in the chord already.");
+
+        note.props["pitch"] = Json (d.note);
+        note.props["drum"] = Json (d.name);
+        note.props["loc"] = Json (d.loc);
+        note.props["head"] = Json (d.head);
+        note.props.erase ("ghost");
+
+        if (event.type == nodeType::chord)
+            sortDrumChord (event);
+
+        return success ("Drum changed.");
+    }
+
+    // A ghost note (the note in brackets) on or off.
+    EditResult toggleGhost (Edit& e)
+    {
+        if (e.event().type == nodeType::rest)
+            return fail ("Select a hit first.");
+
+        auto targets = e.targets();
+        bool all = true;
+
+        for (const auto* n : targets)
+            all = all && n->prop ("ghost").asBool();
+
+        for (auto* n : targets)
+        {
+            if (all)
+                n->props.erase ("ghost");
+            else
+                n->props["ghost"] = Json (true);
+        }
+
+        return success (all ? "Ghost note taken away." : "Ghost note.");
+    }
+
     // After an edit of the notation staff of a guitar or bass score: the tab staff gets the same events with strings
     // and frets. A note that stays as it was stays on its string; a new or changed note is placed near the hand.
     bool syncTab (Edit& e, std::vector<ReplaceChildrenCommand::Change>& changes, std::string& problem)
@@ -2042,8 +2334,9 @@ namespace
                        && n.children.front().type == nodeType::rest && n.children.front().prop ("measureRest").asBool();
             }), m.children.end());
 
-        for (auto& m : e.measures)
-            detail::refreshAccidentals (m, e.fifths);
+        if (! isPercStaff (*e.staff))
+            for (auto& m : e.measures)
+                detail::refreshAccidentals (m, e.fifths);
 
         std::vector<ReplaceChildrenCommand::Change> changes;
 
@@ -2160,10 +2453,6 @@ std::string editBlocker
     if (part == nullptr || part->children.empty())
         return "There is no score to edit.";
 
-    for (const auto& staff : part->children)
-        if (staff.prop ("kind").asString() == "perc" || staff.prop ("clef").asString() == "perc")
-            return "Editing is for piano, guitar and bass scores for now. Drum scores come later.";
-
     return {};
 }
 
@@ -2226,6 +2515,20 @@ EditResult performOn (Score& score, UndoManager& undo, const Json& request)
     if (const auto blocked = editBlocker (score); ! blocked.empty())
         return fail (blocked);
 
+    bool drumScore = false;
+
+    for (const auto& c : score.root().children)
+        if (c.type == nodeType::part && ! c.children.empty() && isPercStaff (c.children.front()))
+            drumScore = true;
+
+    // what only pitched music has
+    static const char* const notForDrums[] = { "pitch", "letter", "interval", "respell", "key", "stem", "voice", "slur", "hairpin" };
+
+    if (drumScore)
+        for (const auto* name : notForDrums)
+            if (op == name)
+                return fail ("That is for pitched music. A drum score has the Drums row: choose a drum and add it or change a hit to it.");
+
     if (op == "key")
         return changeKey (score, undo, (int) request.get ("fifths").asInt(), request.get ("minor").asBool());
 
@@ -2248,6 +2551,27 @@ EditResult performOn (Score& score, UndoManager& undo, const Json& request)
 
     if (op == "voice" && e.tab != nullptr)
         return fail ("A guitar or bass score has one voice.");
+
+    if (op == "drumAdd" || op == "drumSet")
+    {
+        DrumSpec d;
+
+        if (! isPercStaff (*e.staff))
+            return fail ("Drums can only be added to a drum score.");
+
+        if (! drumFrom (request.get ("drum"), d))
+            return fail ("Choose a drum first.");
+
+        return finish (e, undo, op == "drumAdd" ? "Add drum" : "Change drum", op == "drumAdd" ? addDrum (e, d) : setDrum (e, d));
+    }
+
+    if (op == "ghost")
+    {
+        if (! isPercStaff (*e.staff))
+            return fail ("Ghost notes are for drums.");
+
+        return finish (e, undo, "Ghost note", toggleGhost (e));
+    }
 
     if (op == "pitch")
         return finish (e, undo, "Change pitch", changePitch (e, (int) request.get ("semitones").asInt()));

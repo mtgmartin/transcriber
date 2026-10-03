@@ -154,7 +154,7 @@ namespace
                                     return "a chord of one note";
                             }
 
-                            if (e.type == nodeType::note && staff.prop ("kind").asString() != "tab")
+                            if (e.type == nodeType::note && staff.prop ("kind").asString() != "tab" && staff.prop ("kind").asString() != "perc")
                             {
                                 const char* names = "CDEFGAB";
                                 const auto step = e.prop ("step").asString();
@@ -583,7 +583,7 @@ REGISTER (testUndo, "edit: undo and redo as operations");
 
 static void testBlocked()
 {
-    // guitar and bass are edited (the tab follows); drums are not edited yet
+    // piano, guitar, bass and drum scores are edited; an empty score is not
     TranscriptionSettings settings;
     ResolvedCapture rc = takeOf ({ { 40, 0, 1 } }, 4.0);
     auto guitar = transcribeFretted (rc, settings, InstrumentType::guitar).score;
@@ -592,14 +592,12 @@ static void testBlocked()
     CHECK (editBlocker (bass).empty());
 
     auto drums = transcribeDrums (takeOf ({ { 38, 0, 0.1 } }, 4.0), settings, drumPreset ("gm")).score;
-    CHECK (! editBlocker (drums).empty());
-    UndoManager undo (drums);
-    CHECK (! performEdit (drums, undo, req ("delete", idOf (drums, 0))).ok);
+    CHECK (editBlocker (drums).empty());
 
     Score empty;
     CHECK (! editBlocker (empty).empty());
 }
-REGISTER (testBlocked, "edit: drum scores are refused");
+REGISTER (testBlocked, "edit: every instrument can be edited, an empty score cannot");
 
 //==============================================================================
 // Phase 7e: guitar and bass. The notation staff is edited and the tab staff follows.
@@ -1019,6 +1017,192 @@ static void testRandomFrettedEdits()
     CHECK (strings > 20);
 }
 REGISTER (testRandomFrettedEdits, "edit: random guitar and bass edits keep the tab right and undo exactly");
+
+static Json drumJson (int note)
+{
+    const auto map = drumPreset ("gm");
+    const auto* entry = map.find (note);
+    auto j = Json::object();
+
+    if (entry != nullptr)
+    {
+        j.set ("note", entry->note);
+        j.set ("name", entry->name);
+        j.set ("loc", entry->loc);
+        j.set ("head", entry->head);
+        j.set ("voice", entry->voice);
+    }
+
+    return j;
+}
+
+static Json drumReq (const char* op, const std::string& id, int note)
+{
+    auto j = req (op, id);
+    j.set ("drum", drumJson (note));
+    return j;
+}
+
+static Score drumGroove()
+{
+    std::vector<N> notes;
+
+    for (int i = 0; i < 8; ++i)
+        notes.push_back ({ 42, i * 0.5, 0.25 });
+
+    notes.push_back ({ 36, 0, 0.25 });
+    notes.push_back ({ 38, 1, 0.25 });
+    notes.push_back ({ 36, 2, 0.25 });
+    notes.push_back ({ 38, 3, 0.25 });
+    notes.push_back ({ 36, 4, 0.25 });
+    return transcribeDrums (takeOf (notes, 8.0), {}, drumPreset ("gm")).score;
+}
+
+static void testDrumEdits()
+{
+    Session s (drumGroove());
+    const auto start = right (s.score);
+    CHECK_STR (start.c_str(), "m1 ( Closed_hi-hat/8 Closed_hi-hat/8 ) ( [Snare Closed_hi-hat]/8 Closed_hi-hat/8 ) ( Closed_hi-hat/8 Closed_hi-hat/8 ) ( [Snare Closed_hi-hat]/8 Closed_hi-hat/8 ) "
+                              "Bass_drum_1/4 r/4 Bass_drum_1/4 r/4 | m2 R Bass_drum_1/4 r/4 r/2");
+    CHECK (editBlocker (s.score).empty());
+
+    // a drum on the bar of rest of the hands: as long as the beat
+    CHECK (s.run (drumReq ("drumAdd", idOf (s.score, 12), 38)).ok);
+    CHECK (right (s.score).find ("| m2 Snare/4 r/4 r/2 Bass_drum_1/4") != std::string::npos);
+
+    // the same drum twice is refused; another foot drum joins the kick as a chord
+    CHECK (! s.run (drumReq ("drumAdd", idOf (s.score, 12), 36)).ok);
+    CHECK (s.run (drumReq ("drumAdd", idOf (s.score, 12), 44)).ok);
+    CHECK (right (s.score).find ("[Hi-hat_pedal Bass_drum_1]/4 r/4 r/2") != std::string::npos);
+
+    // a hand drum joins the hi-hat; a drum in a rest of the other voice (the tom is a hand drum: it goes to voice 1 at that time)
+    CHECK (s.run (drumReq ("drumAdd", idOf (s.score, 0), 49)).ok);
+    CHECK (right (s.score).find ("m1 ( [Closed_hi-hat Crash_cymbal_1]/8 Closed_hi-hat/8 )") != std::string::npos);
+    CHECK (s.run (drumReq ("drumAdd", idOf (s.score, 9), 45)).ok);
+    CHECK (right (s.score).find ("( [Low_tom Snare Closed_hi-hat]/8 Closed_hi-hat/8 )") != std::string::npos);
+
+    // a hit becomes another drum (the same voice); another voice is refused
+    CHECK (s.run (drumReq ("drumSet", idOf (s.score, 12), 37)).ok);
+    CHECK (right (s.score).find ("| m2 Side_stick/4") != std::string::npos);
+    CHECK (! s.run (drumReq ("drumSet", idOf (s.score, 12), 36)).ok);   // the kick is a foot drum
+    CHECK (! s.run (drumReq ("drumSet", idOf (s.score, 12), 37)).ok);   // it is that drum already
+
+    // ghost note: brackets in the score and in the MEI
+    CHECK (s.run (req ("ghost", idOf (s.score, 12))).ok);
+    CHECK (scoreToMei (s.score, {}).find ("head.mod=\"paren\"") != std::string::npos);
+    CHECK (s.run (req ("ghost", idOf (s.score, 12))).ok);
+    CHECK (scoreToMei (s.score, {}).find ("head.mod=\"paren\"") == std::string::npos);
+
+    // an accent on a hit is written for drums too
+    auto accent = req ("artic", idOf (s.score, 12));
+    accent.set ("value", "acc");
+    CHECK (s.run (accent).ok);
+    CHECK (scoreToMei (s.score, {}).find ("artic=\"acc\"") != std::string::npos);
+
+    // pitched edits are refused; delete and length work
+    CHECK (! s.run (req ("pitch", idOf (s.score, 0), "semitones", 1)).ok);
+    CHECK (! s.run (req ("interval", idOf (s.score, 0), "interval", 3)).ok);
+    CHECK (s.run (req ("delete", idOf (s.score, 1))).ok);
+    CHECK (right (s.score).find ("m1 [Closed_hi-hat Crash_cymbal_1]/8 r/8") != std::string::npos);
+    CHECK (s.run (req ("duration", idOf (s.score, 12), "dur", 8)).ok);
+    CHECK_STR (problems (s.score).c_str(), "");
+
+    // the voice of a drum that has no layer in this measure yet is made
+    Session t (transcribeDrums (takeOf ({ { 38, 0, 0.25 }, { 38, 1, 0.25 } }, 4.0), {}, drumPreset ("gm")).score);
+    CHECK (dumpScore (t.score).find ("v2") == std::string::npos);
+    CHECK (t.run (drumReq ("drumAdd", idOf (t.score, 0), 36)).ok);
+    CHECK (dumpScore (t.score).find ("S1 v2: Bass_drum_1/4 r/4 r/2") != std::string::npos);
+    CHECK_STR (problems (t.score).c_str(), "");
+}
+REGISTER (testDrumEdits, "edit: drum hits are added, changed, ghosted and deleted");
+
+static void testRandomDrumEdits()
+{
+    std::mt19937 rng (21);
+    const int drums[] = { 36, 38, 42, 44, 45, 46, 49, 51, 37, 41 };
+    int applied = 0, refused = 0;
+
+    for (int take = 0; take < 25; ++take)
+    {
+        std::vector<N> notes;
+        const int count = 8 + (int) (rng() % 24);
+
+        for (int i = 0; i < count; ++i)
+            notes.push_back ({ drums[rng() % 10], (double) (rng() % 48) * 0.25, 0.25 });
+
+        Session s (transcribeDrums (takeOf (notes, 12.0), {}, drumPreset ("gm")).score);
+        CHECK_STR (problems (s.score).c_str(), "");
+        const Score start = s.score;
+        std::vector<Score> history { start };
+
+        for (int step = 0; step < 50; ++step)
+        {
+            const auto all = events (s.score);
+            const auto* target = all[rng() % all.size()];
+            std::string id = target->id;
+
+            if (target->type == nodeType::chord && rng() % 2 == 0)
+                id = target->children[rng() % target->children.size()].id;
+
+            Json j = Json::object();
+
+            switch (rng() % 14)
+            {
+                case 0: case 1: case 2: j = drumReq ("drumAdd", id, drums[rng() % 10]); break;
+                case 3: case 4: j = drumReq ("drumSet", id, drums[rng() % 10]); break;
+                case 5: j = req ("ghost", id); break;
+                case 6: j = req ("delete", id); break;
+                case 7: j = req ("duration", id, "dur", 1 << (rng() % 6)); j.set ("dots", (int) (rng() % 2)); break;
+                case 8: j = req ("tie", id); break;
+                case 9: j = req ("beam", id); j.set ("mode", std::string (rng() % 3 == 0 ? "break" : rng() % 2 == 0 ? "join" : "auto")); break;
+                case 10: j = req ("artic", id); j.set ("value", std::string (rng() % 2 == 0 ? "acc" : "marc")); break;
+                case 11: j = req ("dynamic", id); j.set ("value", std::string (rng() % 2 == 0 ? "f" : "pp")); break;
+                case 12: j = req ("break", id); j.set ("mode", std::string (rng() % 2 == 0 ? "system" : "none")); break;
+                default: j = req ("pitch", id, "semitones", 1); break;   // always refused
+            }
+
+            const Score before = s.score;
+            const auto result = performEdit (s.score, s.undo, j);
+
+            if (result.ok)
+            {
+                ++applied;
+                history.push_back (s.score);
+                CHECK (! (s.score == before));
+            }
+            else
+            {
+                ++refused;
+                CHECK (s.score == before);
+            }
+
+            const auto issue = problems (s.score);
+
+            if (! issue.empty())
+                std::printf ("    take %d step %d: %s after %s\n", take, step, issue.c_str(), j.dump().c_str());
+
+            CHECK_STR (issue.c_str(), "");
+        }
+
+        for (size_t i = history.size() - 1; i > 0; --i)
+        {
+            CHECK (s.score == history[i]);
+            CHECK (s.undo.undo());
+        }
+
+        CHECK (s.score == start);
+
+        for (size_t i = 1; i < history.size(); ++i)
+        {
+            CHECK (s.undo.redo());
+            CHECK (s.score == history[i]);
+        }
+    }
+
+    CHECK (applied > 200);
+    CHECK (refused > 20);
+}
+REGISTER (testRandomDrumEdits, "edit: random drum edits stay well formed and undo exactly");
 
 //==============================================================================
 // Phase 7b: spelling and layout.
@@ -1863,4 +2047,49 @@ static void testFrettedClips()
     CHECK (startsWith (tabLine (b.score), "4:0 4:5"));
 }
 REGISTER (testFrettedClips, "edit: the guitar and bass clips of the Live test sheet");
+#endif
+
+#ifdef TRANSCRIBER_FIXTURES_DIR
+static void testGrooveClip()
+{
+    const auto file = midireader::read (std::string (TRANSCRIBER_FIXTURES_DIR) + "/t31-drum-groove.mid");
+    CHECK (file.ok);
+    Session s (transcribeDrums (file.capture, {}, drumPreset ("gm")).score);
+    CHECK (editBlocker (s.score).empty());
+    CHECK (right (s.score).find ("m1 ( [Closed_hi-hat Crash_cymbal_1]/8 Closed_hi-hat/8 )") != std::string::npos);
+
+    // 1: a pedal hi-hat (a foot drum) on the rest of beat 2 in the lower voice
+    CHECK (s.run (drumReq ("drumAdd", idOf (s.score, 9), 44)).ok);
+    CHECK (right (s.score).find ("S1 v2: Bass_drum_1/4 Hi-hat_pedal/4 Bass_drum_1/4 r/4") != std::string::npos || dumpScore (s.score).find ("Bass_drum_1/4 Hi-hat_pedal/4 Bass_drum_1/4 r/4") != std::string::npos);
+
+    // 2: a ride cymbal next to the hi-hat of the first beat's second half
+    CHECK (s.run (drumReq ("drumAdd", idOf (s.score, 1), 51)).ok);
+    CHECK (dumpScore (s.score).find ("[Ride_cymbal_1 Closed_hi-hat]/8") != std::string::npos);
+
+    // 3: the snare of beat 2 becomes a side stick (click the note of the chord)
+    CHECK (s.run (drumReq ("drumSet", events (s.score)[2]->children[0].id, 37)).ok);
+    CHECK (dumpScore (s.score).find ("[Side_stick Closed_hi-hat]/8") != std::string::npos);
+
+    // 4: the ghost snare of bar 3 is a normal hit and a ghost again
+    const auto ghost = idOf (s.score, 33);
+    CHECK (dumpScore (s.score).find ("(Snare)/16") != std::string::npos);
+    CHECK (s.run (req ("ghost", ghost)).ok);
+    CHECK (dumpScore (s.score).find ("(Snare)/16") == std::string::npos);
+    CHECK (s.run (req ("ghost", ghost)).ok);
+    CHECK (dumpScore (s.score).find ("(Snare)/16") != std::string::npos);
+
+    // 5: an accent on the snare; a hi-hat deleted; a kick shortened
+    auto accent = req ("artic", ghost);
+    accent.set ("value", "acc");
+    CHECK (s.run (accent).ok);
+    CHECK (scoreToMei (s.score, {}).find ("artic=\"acc\"") != std::string::npos);
+    CHECK (s.run (req ("delete", idOf (s.score, 3))).ok);
+    CHECK (s.run (req ("duration", idOf (s.score, 8), "dur", 8)).ok);
+
+    // 6: the pitch controls are not for drums
+    CHECK (! s.run (req ("pitch", idOf (s.score, 3), "semitones", 1)).ok);
+    CHECK_STR (problems (s.score).c_str(), "");
+    CHECK (xmlcheck::checkXml (scoreToMei (s.score, {})).wellFormed);
+}
+REGISTER (testGrooveClip, "edit: the drum groove clip of the Live test sheet");
 #endif

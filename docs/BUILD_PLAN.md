@@ -431,6 +431,13 @@ Full results are in `docs/phase1-results.md`.
 - Tests: `test_edit.cpp` (apply/undo of pitch, interval, delete, duration, string moves, chords, marks, key, MEI; `tabProblems` checks that the tab always mirrors the notation: same events, same pitches, playable distinct strings, no notation properties; 30 random guitar/bass takes x 50 random edits from either staff; the clips `t44-edit-guitar` and `t45-edit-bass` as in `docs/phase7e-tests.md`).
 - Not in 7e: drums (7f), alternative tunings, capo, moving a whole chord to another position by hand, fingerings and techniques (bends, slides).
 
+**Part 7f (build 0.12.0, 138 core tests with the fixtures): drum scores.**
+- The page sends the entry of the drum map it wants ("drum": note, name, loc, head, voice), so the score code does not need the map. New operations in `Edit.cpp`: `drumAdd` (a drum at the onset of the selected note or rest, in the layer of its voice: hands 1, feet 2; a missing voice layer is made; a hit already there becomes a chord, otherwise the rest is split and the hit takes the first note value that fits before the end of the beat group), `drumSet` (the selected note becomes another drum of the same voice; another voice is refused when the measure has both voices), `ghost` (toggles the `ghost` property of the selected notes).
+- Not for drums (refused with a message): `pitch`, `letter`, `interval`, `respell`, `key`, `stem`, `voice`, `slur`, `hairpin`. No accidentals are worked out on a percussion staff. `editBlocker` now only refuses an empty score. Accents and other articulations are written for percussion notes in MEI (`@artic`).
+- Page: a fifth row (Drums list + Add drum, Change to this drum, Ghost note), shown for drums only; `data-show` groups hide the controls the instrument does not have (pitch, spelling, key, voice, stem, slur for drums; voice for guitar and bass; Tab string only for guitar and bass). `web/drums.js` asks for the entries of the map in use (`drumMapNeed`) and tells `edit.js` through `window.transcriberDrums`.
+- Limits: a kick-only part has its hits in layer 1 (stems up), so the lower voice of a mixed edit goes into a new layer 2; a drum cannot be added inside a triplet; the map itself is not edited here (Drum map row).
+- Tests: `test_edit.cpp` (`testDrumEdits`, 25 random drum takes x 50 random edits, the clip `t31-drum-groove` as in `docs/phase7f-tests.md`). Test sheet `docs/phase7f-tests.md`.
+
 Built in parts:
 
 | Part | Scope |
@@ -524,6 +531,6 @@ Tools in `tools/live/`. Copy them to the scratchpad or run them in place.
 
 ## 9. Status (update every session)
 
-- **Done:** Phases 0-6 with their Live tests (6: `docs/phase6-results.md`). Phase 7e code (guitar and bass editing, build 0.11.0, 135 core tests): its Live check is next (`docs/phase7e-tests.md`). Phase 7d (page layout, build 0.10.0, 129 core tests) passed in Live except for lines between two breaks being squeezed (`docs/phase7d-results.md`); the fix is in 0.10.1 and was confirmed in Live. Phase 7a (0.7.1), 7b (0.8.0) and 7c (0.9.0; `docs/phase7c-results.md`) passed in Live; 0.9.1 has two small dialog fixes (`docs/phase7a-results.md`): editing notes and rhythms of piano scores.
-- **Waiting on the user:** (1) install 0.11.0 (admin PowerShell, Live closed, `scriptsinstall.ps1`, only after CI is green) so that I can run `docs/phase7e-tests.md`; (2) the reference clips: about 10 clips exported from Live (.mid) with the notation you expect; (3) your own guitar riffs and basslines to confirm the tab (Phase 6 gate).
-- **Next:** the 7e Live check, then editing for drums (7f), then Phase 8 (PDF export).
+- **Done:** Phases 0-6 with their Live tests (6: `docs/phase6-results.md`). Phase 7e (guitar and bass editing) and 7f (drum editing) are built, 0.12.0 with 138 core tests; their Live checks are next (`docs/phase7e-tests.md`, `docs/phase7f-tests.md`). Phase 7d (page layout, build 0.10.0, 129 core tests) passed in Live except for lines between two breaks being squeezed (`docs/phase7d-results.md`); the fix is in 0.10.1 and was confirmed in Live. Phase 7a (0.7.1), 7b (0.8.0) and 7c (0.9.0; `docs/phase7c-results.md`) passed in Live; 0.9.1 has two small dialog fixes (`docs/phase7a-results.md`): editing notes and rhythms of piano scores.
+- **Waiting on the user:** (1) install 0.12.0 (admin PowerShell, Live closed, `scriptsinstall.ps1`, only after I say CI is green) so that I can run `docs/phase7e-tests.md` and `docs/phase7f-tests.md`; (2) the reference clips: about 10 clips exported from Live (.mid) with the notation you expect; (3) your own guitar riffs and basslines to confirm the tab (Phase 6 gate).
+- **Next:** the 7e and 7f Live checks, then Phase 8 (PDF export).

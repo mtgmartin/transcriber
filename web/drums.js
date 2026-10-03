@@ -153,6 +153,23 @@
     learning = -1;
   }
 
+  // the entries of the map in use, for the Drums row of the edit bar
+  let mapEntries = [];
+  let entriesFor = "";
+  let entriesRevision = -1;
+  window.transcriberDrums = { entries: function () { return mapEntries; } };
+
+  on("drumMap", function (r) {
+    if (r.id !== currentId) return;
+
+    try {
+      mapEntries = JSON.parse(r.json).entries || [];
+      window.dispatchEvent(new Event("transcriber-drums"));
+    } catch (err) {
+      mapEntries = [];
+    }
+  });
+
   on("drumMap", function (r) {
     if (r.id !== editingId || editor.hidden) return;
 
@@ -227,6 +244,13 @@
       confirmingDelete = false;
       fillSelect();
       if (!editor.hidden) { editingId = currentId; send("drumMapNeed", { id: currentId }); }
+    }
+
+    // the drums of the map in use are asked for when the map or its content changes
+    if (instrument === "drums" && (entriesFor !== currentId || entriesRevision !== s.drumMapRevision)) {
+      entriesFor = currentId;
+      entriesRevision = s.drumMapRevision;
+      send("drumMapNeed", { id: currentId });
     }
 
     // the unmapped notes of the shown take
