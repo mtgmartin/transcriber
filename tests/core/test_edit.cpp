@@ -768,6 +768,187 @@ static void testVoices()
 REGISTER (testVoices, "edit: move a note to another voice and back");
 
 //==============================================================================
+// Phase 7c: markings and text.
+
+#include "XmlCheck.h"
+
+static Json reqV (const char* op, const std::string& id, const char* key, const std::string& value)
+{
+    auto j = req (op, id);
+    j.set (key, value);
+    return j;
+}
+
+static void testMarkings()
+{
+    Session s (pianoScore ({ { p ("C4"), 0, 1 }, { p ("D4"), 1, 1 }, { p ("E4"), 2, 1 }, { p ("F4"), 3, 1 } }, 4.0, 0));
+
+    // a dynamic: set, change, same again takes it away
+    CHECK (s.run (reqV ("dynamic", idOf (s.score, 0), "value", "mf")).ok);
+    CHECK_STR (events (s.score)[0]->prop ("dyn").asString().c_str(), "mf");
+    CHECK (s.run (reqV ("dynamic", idOf (s.score, 0), "value", "pp")).ok);
+    CHECK_STR (events (s.score)[0]->prop ("dyn").asString().c_str(), "pp");
+    CHECK (s.run (reqV ("dynamic", idOf (s.score, 0), "value", "pp")).ok);
+    CHECK (! events (s.score)[0]->has ("dyn"));
+    CHECK (! s.run (reqV ("dynamic", idOf (s.score, 0), "value", "")).ok);          // nothing to take away
+    CHECK (! s.run (reqV ("dynamic", idOf (s.score, 0), "value", "loud")).ok);      // not a dynamic
+    CHECK (! s.run (reqV ("dynamic", idOf (s.score, 4), "value", "f")).ok);         // a rest
+
+    // articulations: one at a time; the fermata is separate
+    CHECK (s.run (reqV ("artic", idOf (s.score, 1), "value", "stacc")).ok);
+    CHECK (s.run (reqV ("artic", idOf (s.score, 1), "value", "acc")).ok);
+    CHECK_STR (events (s.score)[1]->prop ("artic").asString().c_str(), "acc");
+    CHECK (s.run (reqV ("artic", idOf (s.score, 1), "value", "ferm")).ok);
+    CHECK (events (s.score)[1]->prop ("fermata").asBool());
+    CHECK (s.run (reqV ("artic", idOf (s.score, 1), "value", "acc")).ok);
+    CHECK (! events (s.score)[1]->has ("artic"));
+    CHECK (! s.run (reqV ("artic", idOf (s.score, 1), "value", "tickle")).ok);
+
+    // text above and below, trimmed, not too long
+    auto t = reqV ("text", idOf (s.score, 2), "text", "  dolce  ");
+    t.set ("place", "below");
+    CHECK (s.run (t).ok);
+    CHECK_STR (events (s.score)[2]->prop ("text").asString().c_str(), "dolce");
+    CHECK_STR (events (s.score)[2]->prop ("textPlace").asString().c_str(), "below");
+    CHECK (describeNode (s.score, idOf (s.score, 2)).find ("text \"dolce\" below") != std::string::npos);
+    t.set ("text", std::string (81, 'x'));
+    CHECK (! s.run (t).ok);
+    t.set ("text", "");
+    CHECK (s.run (t).ok);
+    CHECK (! events (s.score)[2]->has ("text"));
+    CHECK (! s.run (t).ok);
+
+    // clear takes all of it away at once
+    CHECK (s.run (reqV ("dynamic", idOf (s.score, 3), "value", "f")).ok);
+    CHECK (s.run (reqV ("artic", idOf (s.score, 3), "value", "marc")).ok);
+    CHECK (s.run (req ("clear", idOf (s.score, 3))).ok);
+    CHECK (! events (s.score)[3]->has ("dyn") && ! events (s.score)[3]->has ("artic"));
+    CHECK (! s.run (req ("clear", idOf (s.score, 3))).ok);
+
+    // marks survive a change of length, and go with a deleted note
+    CHECK (s.run (reqV ("dynamic", idOf (s.score, 0), "value", "mp")).ok);
+    CHECK (s.run (req ("duration", idOf (s.score, 0), "dur", 8)).ok);
+    CHECK_STR (events (s.score)[0]->prop ("dyn").asString().c_str(), "mp");
+    CHECK (s.run (req ("delete", idOf (s.score, 0))).ok);
+    CHECK (! events (s.score)[0]->has ("dyn"));
+
+    // the MEI
+    CHECK (s.run (reqV ("dynamic", idOf (s.score, 2), "value", "ff")).ok);
+    CHECK (s.run (reqV ("artic", idOf (s.score, 2), "value", "stacc")).ok);
+    CHECK (s.run (reqV ("artic", idOf (s.score, 2), "value", "ferm")).ok);
+    auto txt = reqV ("text", idOf (s.score, 2), "text", "a & b < c");
+    CHECK (s.run (txt).ok);
+    const auto mei = scoreToMei (s.score, {});
+    CHECK (xmlcheck::checkXml (mei).wellFormed);
+    CHECK (mei.find ("<dynam startid=\"#" + idOf (s.score, 2) + "\" staff=\"1\" place=\"below\">ff</dynam>") != std::string::npos);
+    CHECK (mei.find ("artic=\"stacc\"") != std::string::npos);
+    CHECK (mei.find ("<fermata startid=\"#" + idOf (s.score, 2)) != std::string::npos);
+    CHECK (mei.find (">a &amp; b &lt; c</dir>") != std::string::npos);
+    CHECK (describeNode (s.score, idOf (s.score, 2)).find ("marks: ff, staccato, fermata") != std::string::npos);
+}
+REGISTER (testMarkings, "edit: dynamics, articulations, fermata and text");
+
+static void testSlursAndHairpins()
+{
+    Session s (pianoScore ({ { p ("C4"), 0, 1 }, { p ("D4"), 1, 1 }, { p ("E4"), 2, 1 }, { p ("F4"), 3, 1 }, { p ("G4"), 4, 1 }, { p ("A4"), 5, 1 } }, 8.0, 0));
+
+    auto slur = req ("slur", idOf (s.score, 0), "count", 3);
+    CHECK (s.run (slur).ok);
+    CHECK (describeNode (s.score, idOf (s.score, 0)).find ("slur starts here") != std::string::npos);
+    auto mei = scoreToMei (s.score, {});
+    CHECK (xmlcheck::checkXml (mei).wellFormed);
+    CHECK (mei.find ("<slur startid=\"#" + idOf (s.score, 0) + "\" endid=\"#" + idOf (s.score, 3) + "\" staff=\"1\"/>") != std::string::npos);
+
+    // the same again takes it away
+    CHECK (s.run (slur).ok);
+    CHECK (scoreToMei (s.score, {}).find ("<slur") == std::string::npos);
+
+    // across the bar line; the rest of the take is rests, so there are not enough notes after the last one
+    CHECK (s.run (req ("slur", idOf (s.score, 2), "count", 3)).ok);
+    CHECK (! s.run (req ("slur", idOf (s.score, 5), "count", 1)).ok);
+    CHECK (! s.run (req ("slur", idOf (s.score, 0), "count", 0)).ok);
+
+    // hairpins: one per start; the other kind replaces it
+    auto cresc = req ("hairpin", idOf (s.score, 1), "count", 2);
+    cresc.set ("form", "cresc");
+    CHECK (s.run (cresc).ok);
+    CHECK (scoreToMei (s.score, {}).find ("<hairpin form=\"cres\"") != std::string::npos);
+    auto dim = cresc;
+    dim.set ("form", "dim");
+    CHECK (s.run (dim).ok);
+    const auto both = scoreToMei (s.score, {});
+    CHECK (both.find ("form=\"dim\"") != std::string::npos);
+    CHECK (both.find ("form=\"cres\"") == std::string::npos);
+    CHECK (s.run (dim).ok);
+    CHECK (scoreToMei (s.score, {}).find ("<hairpin") == std::string::npos);
+
+    // a slur and a hairpin can start on the same note
+    CHECK (s.run (req ("slur", idOf (s.score, 1), "count", 2)).ok);
+    CHECK (s.run (cresc).ok);
+    mei = scoreToMei (s.score, {});
+    CHECK (mei.find ("<slur") != std::string::npos && mei.find ("<hairpin") != std::string::npos);
+
+    // a spanner whose note is gone is not written
+    CHECK (s.run (req ("delete", idOf (s.score, 3))).ok);
+    CHECK (xmlcheck::checkXml (scoreToMei (s.score, {})).wellFormed);
+    CHECK (scoreToMei (s.score, {}).find ("endid=\"#" + idOf (s.score, 3) + "\"") == std::string::npos);
+}
+REGISTER (testSlursAndHairpins, "edit: slurs and hairpins");
+
+static void testTempo()
+{
+    Session s (pianoScore ({ { p ("C4"), 0, 1 }, { p ("D4"), 1, 1 }, { p ("E4"), 4, 1 } }, 8.0, 0));
+    const auto countTempos = [&]
+    {
+        int n = 0;
+
+        for (const auto& part : s.score.root().children)
+            for (const auto& staff : part.children)
+                for (const auto& m : staff.children)
+                    for (const auto& c : m.children)
+                        n += c.type == nodeType::tempo ? 1 : 0;
+
+        return n;
+    };
+
+    CHECK_EQ (countTempos(), 1);   // the transcription's own mark
+
+    auto t = req ("tempo", idOf (s.score, 1), "bpm", 90);
+    t.set ("text", "Andante");
+    CHECK (s.run (t).ok);
+    CHECK_EQ (countTempos(), 2);
+    const auto mei = scoreToMei (s.score, {});
+    CHECK (xmlcheck::checkXml (mei).wellFormed);
+    CHECK (mei.find ("Andante <symbol") != std::string::npos);
+    CHECK (mei.find ("mm=\"90\"") != std::string::npos);
+
+    // the same place again replaces the mark; a text only
+    auto u = req ("tempo", idOf (s.score, 1), "bpm", 0);
+    u.set ("text", "rit.");
+    CHECK (s.run (u).ok);
+    CHECK_EQ (countTempos(), 2);
+
+    // nothing at all takes it away
+    auto none = req ("tempo", idOf (s.score, 1), "bpm", 0);
+    none.set ("text", "");
+    CHECK (s.run (none).ok);
+    CHECK_EQ (countTempos(), 1);
+    CHECK (! s.run (none).ok);
+
+    // the first mark of the take can be changed (onset 0 of the first measure)
+    auto first = req ("tempo", idOf (s.score, 0), "bpm", 140);
+    first.set ("text", "");
+    CHECK (s.run (first).ok);
+    CHECK_EQ (countTempos(), 1);
+
+    // out of range, a rest
+    CHECK (! s.run (req ("tempo", idOf (s.score, 0), "bpm", 500)).ok);
+    CHECK (! s.run (req ("tempo", idOf (s.score, 0), "bpm", 5)).ok);
+    CHECK (! s.run (req ("tempo", "nonsense", "bpm", 100)).ok);
+}
+REGISTER (testTempo, "edit: tempo marks");
+
+//==============================================================================
 // Random edits on random takes: the score stays well formed, every step undoes and redoes exactly,
 // and measures that were not touched stay as they were.
 static void testRandomEdits()
@@ -820,7 +1001,7 @@ static void testRandomEdits()
                 id = target->children[rng() % target->children.size()].id;
 
             Json j = Json::object();
-            const auto kind = rng() % 12;
+            const auto kind = rng() % 19;
 
             switch (kind)
             {
@@ -835,7 +1016,14 @@ static void testRandomEdits()
                 case 8: j = req ("stem", id); j.set ("dir", std::string (rng() % 3 == 0 ? "up" : rng() % 2 == 0 ? "down" : rng() % 2 == 0 ? "auto" : "flip")); break;
                 case 9: j = req ("beam", id); j.set ("mode", std::string (rng() % 3 == 0 ? "break" : rng() % 2 == 0 ? "join" : "auto")); break;
                 case 10: j = req ("voice", id, "voice", 1 + (int) (rng() % 3)); break;
-                default: j = Json::object(); j.set ("op", "key"); j.set ("fifths", (int) (rng() % 15) - 7); j.set ("minor", rng() % 2 == 0); break;
+                case 11: j = Json::object(); j.set ("op", "key"); j.set ("fifths", (int) (rng() % 15) - 7); j.set ("minor", rng() % 2 == 0); break;
+                case 12: j = req ("dynamic", id); j.set ("value", std::string (rng() % 2 == 0 ? "mf" : rng() % 2 == 0 ? "pp" : "")); break;
+                case 13: j = req ("artic", id); j.set ("value", std::string (rng() % 3 == 0 ? "ferm" : rng() % 2 == 0 ? "stacc" : "acc")); break;
+                case 14: j = req ("text", id); j.set ("text", std::string (rng() % 4 == 0 ? "" : "text")); j.set ("place", std::string (rng() % 2 == 0 ? "below" : "above")); break;
+                case 15: j = req ("slur", id, "count", 1 + (int) (rng() % 3)); break;
+                case 16: j = req ("hairpin", id, "count", 1 + (int) (rng() % 3)); j.set ("form", std::string (rng() % 2 == 0 ? "cresc" : "dim")); break;
+                case 17: j = req ("tempo", id, "bpm", rng() % 4 == 0 ? 0 : 60 + (int) (rng() % 100)); j.set ("text", std::string (rng() % 2 == 0 ? "" : "rit.")); break;
+                default: j = req ("clear", id); break;
             }
 
             const Score before = s.score;

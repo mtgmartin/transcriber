@@ -95,3 +95,11 @@ button.danger { background: #5a2323; border-color: #f08a8a; }
 #edit-bar button { padding: 3px 9px; min-width: 30px; }
 #edit-msg { margin: 6px 0 0; min-height: 1.4em; }
 #edited-note, #edit-help { margin: 6px 0 0; }
+#edit-bar3 { margin: 8px 0 0; gap: 6px; align-items: center; }
+#edit-bar3 .sep { width: 1px; align-self: stretch; background: var(--rule); margin: 0 4px; }
+#edit-bar3 button { padding: 3px 9px; }
+#dialog { position: fixed; inset: 0; background: rgba(0, 0, 0, 0.55); display: flex; align-items: center; justify-content: center; z-index: 10; }
+#dialog form { background: #1c2438; border: 1px solid var(--rule); border-radius: 8px; padding: 16px 20px; min-width: 320px; max-width: 90vw; }
+#dialog h3 { margin: 0 0 10px; }
+#dialog-fields label { display: block; margin: 8px 0 3px; color: var(--dim); }
+#dialog-fields input, #dialog-fields select { width: 100%; box-sizing: border-box; }

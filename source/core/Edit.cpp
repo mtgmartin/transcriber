@@ -26,10 +26,14 @@ namespace
     constexpr int highestPitch = 108;
 
     const char* const eventKeys[] = { "onset", "ticks", "dur", "dots", "tuplet", "tupletNum", "tupletNumbase", "beam",
-                                      "stem", "beamBreak", "beamJoin" };
+                                      "stem", "beamBreak", "beamJoin", "dyn", "artic", "fermata", "text", "textPlace" };
 
     // The properties of a note or chord that mean nothing on a rest.
-    bool onlyForNotes (const std::string& key) { return key == "beam" || key == "stem" || key == "beamBreak" || key == "beamJoin"; }
+    bool onlyForNotes (const std::string& key)
+    {
+        return key == "beam" || key == "stem" || key == "beamBreak" || key == "beamJoin" || key == "dyn" || key == "artic"
+               || key == "fermata" || key == "text" || key == "textPlace";
+    }
 
     //==========================================================================
     // Note values and spelling
@@ -1235,6 +1239,278 @@ namespace
         return success ("Moved to voice " + std::to_string (voice) + ".", movedId);
     }
 
+    //==========================================================================
+    // Markings and text (7c)
+
+    EditResult setDynamic (Edit& e, const std::string& value)
+    {
+        static const std::set<std::string> known = { "ppp", "pp", "p", "mp", "mf", "f", "ff", "fff", "sfz", "fp" };
+        auto& event = e.event();
+
+        if (event.type == nodeType::rest)
+            return fail ("A dynamic belongs to a note or chord.");
+
+        if (value.empty() || event.prop ("dyn").asString() == value)
+        {
+            if (! event.has ("dyn"))
+                return fail ("There is no dynamic to take away.");
+
+            event.props.erase ("dyn");
+            return success ("Dynamic taken away.");
+        }
+
+        if (known.count (value) == 0)
+            return fail ("That dynamic is not known.");
+
+        event.props["dyn"] = Json (value);
+        return success ("Dynamic " + value + ".");
+    }
+
+    // An articulation (one per note; the same one again takes it away), or the fermata (separate).
+    EditResult setArticulation (Edit& e, const std::string& value)
+    {
+        auto& event = e.event();
+
+        if (event.type == nodeType::rest)
+            return fail ("An articulation belongs to a note or chord.");
+
+        if (value == "ferm")
+        {
+            if (event.prop ("fermata").asBool())
+            {
+                event.props.erase ("fermata");
+                return success ("Fermata taken away.");
+            }
+
+            event.props["fermata"] = Json (true);
+            return success ("Fermata.");
+        }
+
+        if (value != "stacc" && value != "acc" && value != "ten" && value != "marc")
+            return fail ("That articulation is not known.");
+
+        if (event.prop ("artic").asString() == value)
+        {
+            event.props.erase ("artic");
+            return success ("Articulation taken away.");
+        }
+
+        event.props["artic"] = Json (value);
+        return success ("Articulation set.");
+    }
+
+    EditResult setText (Edit& e, std::string text, const std::string& place)
+    {
+        auto& event = e.event();
+
+        while (! text.empty() && (text.front() == ' ' || text.front() == '\t'))
+            text.erase (text.begin());
+
+        while (! text.empty() && (text.back() == ' ' || text.back() == '\t'))
+            text.pop_back();
+
+        if (text.empty())
+        {
+            if (! event.has ("text"))
+                return fail ("There is no text to take away.");
+
+            event.props.erase ("text");
+            event.props.erase ("textPlace");
+            return success ("Text taken away.");
+        }
+
+        if (text.size() > 80)
+            return fail ("The text can be 80 characters long at most.");
+
+        event.props["text"] = Json (text);
+
+        if (place == "below")
+            event.props["textPlace"] = Json ("below");
+        else
+            event.props.erase ("textPlace");
+
+        return success ("Text set.");
+    }
+
+    EditResult clearMarks (Edit& e)
+    {
+        auto& event = e.event();
+        bool any = false;
+
+        for (const auto* key : { "dyn", "artic", "fermata", "text", "textPlace" })
+        {
+            any = any || event.has (key);
+            event.props.erase (key);
+        }
+
+        if (! any)
+            return fail ("There is nothing to take away.");
+
+        return success ("Markings taken away.");
+    }
+
+    // A slur or hairpin from the selected note or chord to the count-th note or chord after it in the same voice.
+    // Doing the same again takes it away. One undo step.
+    EditResult spanner (Edit& e, UndoManager& undo, const std::string& kind, int count)
+    {
+        if (e.event().type == nodeType::rest)
+            return fail ("A slur or hairpin starts on a note or chord.");
+
+        if (count < 1 || count > 32)
+            return fail ("A slur or hairpin can run over 1 to 32 notes.");
+
+        auto sequences = sequencesOf (e.measures);
+        auto& seq = sequences[e.layer().prop ("n").asInt (1)];
+        size_t at = 0;
+
+        while (at < seq.size() && seq[at].event != &e.event())
+            ++at;
+
+        std::string target;
+        int found = 0;
+
+        for (size_t k = at + 1; k < seq.size() && found < count; ++k)
+            if (seq[k].event->type != nodeType::rest)
+            {
+                target = seq[k].event->id;
+                ++found;
+            }
+
+        if (found < count)
+            return fail ("There are not enough notes after it.");
+
+        const auto& root = e.score.root();
+        const auto from = e.event().id;
+        const bool isHairpin = kind != "slur";
+        std::string sameKind;
+        std::vector<std::string> others;   // a slur and a hairpin can share a start; two hairpins cannot
+
+        for (const auto& sp : root.children)
+        {
+            if (sp.type != nodeType::spanner || sp.prop ("from").asString() != from)
+                continue;
+
+            if (sp.prop ("kind").asString() == kind)
+                sameKind = sp.id;
+            else if (isHairpin && sp.prop ("kind").asString() != "slur")
+                others.push_back (sp.id);
+        }
+
+        undo.beginGroup (kind == "slur" ? "Slur" : "Hairpin");
+        bool ok = true;
+
+        if (! sameKind.empty())
+        {
+            ok = undo.perform (std::make_unique<RemoveNodeCommand> (sameKind, "Slur"));
+        }
+        else
+        {
+            for (const auto& id : others)
+                ok = ok && undo.perform (std::make_unique<RemoveNodeCommand> (id, "Hairpin"));
+
+            auto node = e.score.makeNode (nodeType::spanner);
+            node.props["kind"] = Json (kind);
+            node.props["from"] = Json (from);
+            node.props["to"] = Json (target);
+            ok = ok && undo.perform (std::make_unique<InsertNodeCommand> (root.id, root.children.size(), std::move (node), "Slur"));
+        }
+
+        undo.endGroup();
+
+        if (! ok)
+        {
+            undo.undo();
+            return fail ("The change did not fit the score.");
+        }
+
+        return success (! sameKind.empty() ? "Taken away." : kind == "slur" ? "Slur added." : kind == "cresc" ? "Crescendo added." : "Diminuendo added.");
+    }
+
+    // A tempo mark at the place of the selected note, in the first staff: a number of beats per minute and/or text. With
+    // neither, the mark there is taken away.
+    EditResult tempoMark (Score& score, UndoManager& undo, const std::string& id, int bpm, std::string text)
+    {
+        const auto* node = score.find (id);
+
+        if (node != nullptr && node->type == nodeType::note)   // a note of a chord
+        {
+            const auto* p = score.findParent (id);
+
+            if (p != nullptr && p->type == nodeType::chord)
+                node = p;
+        }
+
+        const auto* layer = node != nullptr ? score.findParent (node->id) : nullptr;
+        const auto* measure = layer != nullptr ? score.findParent (layer->id) : nullptr;
+        size_t measureIndex = 0;
+        const auto* staff = measure != nullptr ? score.findParent (measure->id, &measureIndex) : nullptr;
+        const auto* part = staff != nullptr ? score.findParent (staff->id) : nullptr;
+
+        if (part == nullptr || node == nullptr || ! isEvent (*node) || part->children.empty() || measureIndex >= part->children.front().children.size())
+            return fail ("Select a note or a rest first.");
+
+        if (bpm != 0 && (bpm < 20 || bpm > 400))
+            return fail ("The tempo can be 20 to 400 beats per minute.");
+
+        while (! text.empty() && text.front() == ' ')
+            text.erase (text.begin());
+
+        while (! text.empty() && text.back() == ' ')
+            text.pop_back();
+
+        if (text.size() > 40)
+            return fail ("The tempo text can be 40 characters long at most.");
+
+        const auto& first = part->children.front().children[measureIndex];   // the measure of the first staff
+        const auto onset = node->prop ("onset").asInt();
+        auto children = first.children;
+        bool had = false;
+
+        children.erase (std::remove_if (children.begin(), children.end(), [&] (const Node& n)
+        {
+            const bool same = n.type == nodeType::tempo && n.prop ("onset").asInt() == onset;
+            had = had || same;
+            return same;
+        }), children.end());
+
+        if (bpm == 0 && text.empty())
+        {
+            if (! had)
+                return fail ("There is no tempo mark there to take away.");
+        }
+        else
+        {
+            auto mark = score.makeNode (nodeType::tempo);
+            mark.props["onset"] = Json (onset);
+
+            if (bpm > 0)
+                mark.props["bpm"] = Json (bpm);
+
+            if (! text.empty())
+                mark.props["text"] = Json (text);
+
+            // marks are kept in order of their place in the bar
+            auto at = children.end();
+
+            for (auto it = children.begin(); it != children.end(); ++it)
+                if (it->type == nodeType::tempo && it->prop ("onset").asInt() > onset)
+                {
+                    at = it;
+                    break;
+                }
+
+            children.insert (at, std::move (mark));
+        }
+
+        std::vector<ReplaceChildrenCommand::Change> changes;
+        changes.push_back ({ first.id, std::move (children) });
+
+        if (! undo.perform (std::make_unique<ReplaceChildrenCommand> (std::move (changes), "Tempo")))
+            return fail ("The change did not fit the score.");
+
+        return success (bpm == 0 && text.empty() ? "Tempo mark taken away." : "Tempo mark set.");
+    }
+
     EditResult finish (Edit& e, UndoManager& undo, const std::string& name, EditResult result)
     {
         if (! result.ok)
@@ -1385,6 +1661,9 @@ EditResult performEdit (Score& score, UndoManager& undo, const Json& request)
     if (op == "key")
         return changeKey (score, undo, (int) request.get ("fifths").asInt(), request.get ("minor").asBool());
 
+    if (op == "tempo")
+        return tempoMark (score, undo, request.get ("id").asString(), (int) request.get ("bpm").asInt(), request.get ("text").asString());
+
     Edit e (score);
 
     if (! locate (e, request.get ("id").asString()))
@@ -1425,6 +1704,24 @@ EditResult performEdit (Score& score, UndoManager& undo, const Json& request)
 
     if (op == "voice")
         return finish (e, undo, "Change voice", moveToVoice (e, (int) request.get ("voice").asInt()));
+
+    if (op == "dynamic")
+        return finish (e, undo, "Dynamic", setDynamic (e, request.get ("value").asString()));
+
+    if (op == "artic")
+        return finish (e, undo, "Articulation", setArticulation (e, request.get ("value").asString()));
+
+    if (op == "text")
+        return finish (e, undo, "Text", setText (e, request.get ("text").asString(), request.get ("place").asString()));
+
+    if (op == "clear")
+        return finish (e, undo, "Take away markings", clearMarks (e));
+
+    if (op == "slur")
+        return spanner (e, undo, "slur", (int) request.get ("count").asInt (1));
+
+    if (op == "hairpin")
+        return spanner (e, undo, request.get ("form").asString() == "dim" ? "dim" : "cresc", (int) request.get ("count").asInt (1));
 
     return fail ("Unknown edit \"" + op + "\".");
 }

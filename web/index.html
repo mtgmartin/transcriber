@@ -77,6 +77,33 @@
       <button type="button" data-op="beam" data-mode="join" title="Join this note to the one before it" disabled>Join</button>
       <button type="button" data-op="beam" data-mode="auto" title="The program decides" disabled>Auto</button>
     </div>
+    <div class="row" id="edit-bar3">
+      <span class="dim">Dynamic</span>
+      <select id="ed-dyn" title="A dynamic under the selected note" disabled>
+        <option value="">choose</option><option>ppp</option><option>pp</option><option>p</option><option>mp</option><option>mf</option>
+        <option>f</option><option>ff</option><option>fff</option><option>sfz</option><option>fp</option>
+      </select>
+      <span class="sep"></span>
+      <span class="dim">Articulation</span>
+      <button type="button" data-op="artic" data-value="stacc" title="Staccato (dot)" disabled>Staccato</button>
+      <button type="button" data-op="artic" data-value="acc" title="Accent" disabled>Accent</button>
+      <button type="button" data-op="artic" data-value="ten" title="Tenuto" disabled>Tenuto</button>
+      <button type="button" data-op="artic" data-value="marc" title="Marcato" disabled>Marcato</button>
+      <button type="button" data-op="artic" data-value="ferm" title="Fermata" disabled>Fermata</button>
+      <span class="sep"></span>
+      <label for="ed-span" class="dim">Slur / hairpin to</label>
+      <select id="ed-span" disabled>
+        <option value="1">the next note</option><option value="2">2 notes on</option><option value="3">3 notes on</option><option value="4">4 notes on</option>
+        <option value="5">5 notes on</option><option value="6">6 notes on</option><option value="7">7 notes on</option><option value="8">8 notes on</option>
+      </select>
+      <button type="button" data-op="slur" title="A slur from the selected note; again takes it away" disabled>Slur</button>
+      <button type="button" data-op="hairpin" data-form="cresc" title="Crescendo hairpin" disabled>Cresc.</button>
+      <button type="button" data-op="hairpin" data-form="dim" title="Diminuendo hairpin" disabled>Dim.</button>
+      <span class="sep"></span>
+      <button type="button" data-op="text-dialog" title="Text above or below the selected note" disabled>Text&hellip;</button>
+      <button type="button" data-op="tempo-dialog" title="A tempo mark at the selected note" disabled>Tempo&hellip;</button>
+      <button type="button" data-op="clear" title="Take away the dynamic, articulation, fermata and text of the selected note" disabled>Clear marks</button>
+    </div>
     <p id="edit-msg" class="result"></p>
     <p id="edited-note" class="dim" hidden>You have edited this score, so the reading and the notation settings are locked.
        <button id="discard-edits" type="button">Discard my edits</button></p>
@@ -217,6 +244,14 @@
 <script src="app.js"></script>
 <script src="score.js"></script>
 <script src="drums.js"></script>
+<div id="dialog" hidden>
+  <form id="dialog-form">
+    <h3 id="dialog-title"></h3>
+    <div id="dialog-fields"></div>
+    <p id="dialog-error" class="result bad"></p>
+    <div class="row"><button type="submit" id="dialog-ok">OK</button><button type="button" id="dialog-cancel">Cancel</button></div>
+  </form>
+</div>
 <script src="edit.js"></script>
 </body>
 </html>

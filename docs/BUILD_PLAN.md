@@ -407,6 +407,14 @@ Full results are in `docs/phase1-results.md`.
 - Tests: `test_edit.cpp` (respell incl. ties and chords, key change with exact undo, stems, beams, voices, the clip `t42-edit-layout` as in `docs/phase7b-tests.md`; the random edit test now also draws the new operations and checks voice order and empty voices), JUCE test `service: editing the score` (key).
 - Not in 7b: beams and stems for guitar/drums, moving a note to a voice in another measure, cross-staff notes, courtesy accidentals.
 
+**Part 7c (build 0.9.0, 126 core tests): markings and text of a piano score.**
+- Data: marks on a note or chord are properties (`dyn` = ppp..fff, sfz, fp; `artic` = stacc, acc, ten, marc; `fermata`; `text` and `textPlace`); slurs and hairpins are `spanner` nodes under the score with `kind` (slur, cresc, dim), `from` and `to` (event ids); tempo marks are the existing `tempo` nodes of the first staff.
+- `Edit.cpp` operations: `dynamic`, `artic` (toggles), `text`, `clear`, `slur`/`hairpin` (to the count-th following note or chord of the voice, rests skipped; same again takes it away; a crescendo replaces a diminuendo; group of `InsertNode`/`RemoveNode` commands), `tempo` (bpm 20-400 and/or text at the onset of the selected event, replaces the mark there, both empty removes it).
+- `Mei.cpp`: `<dynam>`, `<fermata>`, `<dir>` for text, `<slur>`, `<hairpin>` in the measure where they start (spanners whose notes are gone or became rests are skipped), `@artic`; the click sentence lists the marks.
+- Page: third row of the Edit bar and a small in-page dialog for text and tempo (`#dialog` in `web/index.html`, `openDialog` in `web/edit.js`).
+- Tests: `test_edit.cpp` (marks, spanners incl. removal and replacement, tempo, MEI contents and well-formedness; the random edit test draws the new operations too). Checked in Verovio (browser harness): dynam, artic, slur, hairpin, fermata, dir and tempo all render.
+- Not in 7c: guitar/bass/drum markings, title and composer (they go on the page and the PDF in Phase 8).
+
 Built in four parts:
 
 | Part | Scope |
@@ -497,6 +505,6 @@ Tools in `tools/live/`. Copy them to the scratchpad or run them in place.
 
 ## 9. Status (update every session)
 
-- **Done:** Phases 0-6 with their Live tests (6: `docs/phase6-results.md`). Phase 7a (build 0.7.1) and 7b (build 0.8.0, 123 core tests; `docs/phase7b-results.md`) passed in Live (`docs/phase7a-results.md`): editing notes and rhythms of piano scores.
-- **Waiting on the user:** (1) the reference clips: about 10 clips exported from Live (.mid) with the notation you expect; (2) your own guitar riffs and basslines to confirm the tab (Phase 6 gate).
-- **Next:** 7c (markings and text), 7d (page layout), then editing for guitar, bass and drums.
+- **Done:** Phases 0-6 with their Live tests (6: `docs/phase6-results.md`). Phase 7c code (build 0.9.0, 126 core tests): markings and text; its Live check is next. Phase 7a (build 0.7.1) and 7b (build 0.8.0; `docs/phase7b-results.md`) passed in Live (`docs/phase7a-results.md`): editing notes and rhythms of piano scores.
+- **Waiting on the user:** (1) install 0.9.0 (admin PowerShell, Live closed, `scriptsinstall.ps1`); (2) the reference clips: about 10 clips exported from Live (.mid) with the notation you expect; (3) your own guitar riffs and basslines to confirm the tab (Phase 6 gate).
+- **Next:** the 7c Live check (`docs/phase7c-tests.md`, then `docs/phase7c-results.md`), then 7d (page layout), then editing for guitar, bass and drums.

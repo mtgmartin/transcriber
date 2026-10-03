@@ -133,6 +133,7 @@ namespace
                 staffDefinition (*staff);
 
             out += "   </staffGrp>\n  </scoreDef>\n  <section>\n";
+            indexEvents (staves);
 
             for (size_t i = 0; i < measures; ++i)
             {
@@ -183,6 +184,12 @@ namespace
                             tempoMark (c, (int) staff->prop ("n").asInt(), den);
                 }
 
+                for (const auto* staff : staves)
+                    if (i < staff->children.size())
+                        markings (staff->children[i], (int) staff->prop ("n").asInt());
+
+                spannersStartingIn (i);
+
                 for (const auto& [id, text] : directions)
                     out += "    <dir startid=\"#" + xmlEscape (id) + "\" place=\"above\" staff=\"1\">" + xmlEscape (text) + "</dir>\n";
 
@@ -201,6 +208,77 @@ namespace
         std::string kind;                 // "perc", "tab" or empty: the staff being written
         int layerNumber = 1;
         std::vector<std::pair<std::string, std::string>> directions;   // (id, text) of marks above notes, written after the staves
+
+        // where every note, chord and rest is, for the marks that point at one
+        struct EventInfo
+        {
+            size_t measure = 0;
+            int staff = 1;
+            bool rest = false;
+        };
+
+        std::map<std::string, EventInfo> where;
+
+        void indexEvents (const std::vector<const Node*>& staves)
+        {
+            for (const auto* staff : staves)
+                for (size_t i = 0; i < staff->children.size(); ++i)
+                    for (const auto& layer : staff->children[i].children)
+                        for (const auto& e : layer.children)
+                            where[e.id] = { i, (int) staff->prop ("n").asInt(), e.type == nodeType::rest };
+        }
+
+        // Dynamics, fermatas and text that belong to a note or chord of this measure.
+        void markings (const Node& measure, int staffNumber)
+        {
+            const auto staffText = " staff=\"" + std::to_string (staffNumber) + "\"";
+
+            for (const auto& layer : measure.children)
+            {
+                if (layer.type != nodeType::layer)
+                    continue;
+
+                for (const auto& e : layer.children)
+                {
+                    const auto start = "startid=\"#" + xmlEscape (e.id) + "\"";
+
+                    if (e.has ("dyn") && e.type != nodeType::rest)
+                        out += "    <dynam " + start + staffText + " place=\"below\">" + xmlEscape (e.prop ("dyn").asString()) + "</dynam>\n";
+
+                    if (e.prop ("fermata").asBool() && e.type != nodeType::rest)
+                        out += "    <fermata " + start + staffText + " place=\"above\"/>\n";
+
+                    if (e.has ("text"))
+                        out += "    <dir " + start + staffText + " place=\"" + (e.prop ("textPlace").asString() == "below" ? "below" : "above")
+                               + "\">" + xmlEscape (e.prop ("text").asString()) + "</dir>\n";
+                }
+            }
+        }
+
+        // Slurs and hairpins between two notes or chords; the control event sits in the measure where it starts.
+        void spannersStartingIn (size_t measureIndex)
+        {
+            for (const auto& sp : score.root().children)
+            {
+                if (sp.type != nodeType::spanner)
+                    continue;
+
+                const auto from = where.find (sp.prop ("from").asString());
+                const auto to = where.find (sp.prop ("to").asString());
+
+                if (from == where.end() || to == where.end() || from->second.measure != measureIndex || from->second.rest || to->second.rest)
+                    continue;
+
+                const auto spanKind = sp.prop ("kind").asString();
+                const auto ends = " startid=\"#" + xmlEscape (sp.prop ("from").asString()) + "\" endid=\"#" + xmlEscape (sp.prop ("to").asString())
+                                  + "\" staff=\"" + std::to_string (from->second.staff) + "\"";
+
+                if (spanKind == "slur")
+                    out += "    <slur" + ends + "/>\n";
+                else if (spanKind == "cresc" || spanKind == "dim")
+                    out += std::string ("    <hairpin form=\"") + (spanKind == "cresc" ? "cres" : "dim") + "\"" + ends + " place=\"below\"/>\n";
+            }
+        }
 
         // The clef of a staff, and for a tablature staff its lines and tuning.
         void staffDefinition (const Node& staff)
@@ -382,6 +460,9 @@ namespace
                 if (withDuration && n.has ("stem"))
                     attribute (s, "stem.dir", n.prop ("stem").asString());
 
+                if (withDuration && n.has ("artic"))
+                    attribute (s, "artic", n.prop ("artic").asString());
+
                 const auto alter = (int) n.prop ("alter").asInt();
 
                 if (n.has ("accid"))
@@ -466,6 +547,9 @@ namespace
                     attribute (s, "stem.dir", layerNumber == 1 ? "up" : "down");
                 else if (e.has ("stem"))
                     attribute (s, "stem.dir", e.prop ("stem").asString());
+
+                if (kind != "perc" && e.has ("artic"))
+                    attribute (s, "artic", e.prop ("artic").asString());
 
                 out += pad + s + ">\n";
 
@@ -668,6 +752,36 @@ std::string describeNode (const Score& score, const std::string& id)
 
     if (pickedNote)
         add ("this note: " + pitchText (*node));
+
+    if (event->type != nodeType::rest)
+    {
+        static const std::map<std::string, std::string> articNames = { { "stacc", "staccato" }, { "acc", "accent" }, { "ten", "tenuto" }, { "marc", "marcato" } };
+        std::string marks;
+
+        auto mark = [&] (const std::string& m) { marks += (marks.empty() ? "" : ", ") + m; };
+
+        if (event->has ("dyn"))
+            mark (event->prop ("dyn").asString());
+
+        if (event->has ("artic"))
+        {
+            const auto it = articNames.find (event->prop ("artic").asString());
+            mark (it != articNames.end() ? it->second : event->prop ("artic").asString());
+        }
+
+        if (event->prop ("fermata").asBool())
+            mark ("fermata");
+
+        for (const auto& sp : score.root().children)
+            if (sp.type == nodeType::spanner && sp.prop ("from").asString() == event->id)
+                mark (sp.prop ("kind").asString() == "slur" ? "slur starts here" : sp.prop ("kind").asString() == "cresc" ? "crescendo starts here" : "diminuendo starts here");
+
+        if (! marks.empty())
+            add ("marks: " + marks);
+    }
+
+    if (event->has ("text"))
+        add ("text \"" + event->prop ("text").asString() + "\" " + (event->prop ("textPlace").asString() == "below" ? "below" : "above"));
 
     return text;
 }

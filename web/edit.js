@@ -8,6 +8,7 @@
 (function () {
   const bar = $("edit-bar");
   const bar2 = $("edit-bar2");
+  const bar3 = $("edit-bar3");
   const message = $("edit-msg");
   let status = null;
   let timer = null;
@@ -29,7 +30,7 @@
     const hasScore = !!edit;
     const can = hasScore && !edit.blocked && selected() !== "" && status.state !== "recording";
 
-    [bar, bar2].forEach(function (row) {
+    [bar, bar2, bar3].forEach(function (row) {
       row.querySelectorAll("button[data-op]").forEach(function (b) {
         const op = b.dataset.op;
         b.disabled = op === "undo" ? !(hasScore && edit.canUndo)
@@ -39,6 +40,8 @@
     });
 
     $("ed-interval").disabled = !can;
+    $("ed-dyn").disabled = !can;
+    $("ed-span").disabled = !can;
     $("ed-key").disabled = !(hasScore && !edit.blocked && status.state !== "recording");
 
     // the key of the score (it can change by a key change, its undo, or a new take)
@@ -84,6 +87,13 @@
     if (b.dataset.voice) request.voice = parseInt(b.dataset.voice, 10);
     if (b.dataset.dir) request.dir = b.dataset.dir;
     if (b.dataset.mode) request.mode = b.dataset.mode;
+    if (b.dataset.value) request.value = b.dataset.value;
+    if (b.dataset.form) request.form = b.dataset.form;
+    if (request.op === "slur" || request.op === "hairpin") request.count = parseInt($("ed-span").value, 10);
+
+    if (request.op === "text-dialog") { askText(); b.blur(); return; }
+    if (request.op === "tempo-dialog") { askTempo(); b.blur(); return; }
+
     if (request.op === "interval") request.interval = parseInt($("ed-interval").value, 10);
     run(request);
     b.blur();
@@ -91,6 +101,93 @@
 
   bar.addEventListener("click", buttonClicked);
   bar2.addEventListener("click", buttonClicked);
+  bar3.addEventListener("click", buttonClicked);
+
+  $("ed-dyn").addEventListener("change", function () {
+    const v = $("ed-dyn").value;
+    $("ed-dyn").value = "";
+    if (v) run({ op: "dynamic", value: v });
+    $("ed-dyn").blur();
+  });
+
+  // ---- a small dialog for text ----
+  const dialog = $("dialog");
+  let dialogDone = null;
+
+  function openDialog(title, fields, done) {
+    $("dialog-title").textContent = title;
+    $("dialog-error").textContent = "";
+    const holder = $("dialog-fields");
+    holder.textContent = "";
+
+    fields.forEach(function (f) {
+      const label = document.createElement("label");
+      label.textContent = f.label;
+      label.htmlFor = "dlg-" + f.id;
+      let input;
+
+      if (f.type === "select") {
+        input = document.createElement("select");
+        f.options.forEach(function (o) {
+          const opt = document.createElement("option");
+          opt.value = o[0]; opt.textContent = o[1];
+          input.appendChild(opt);
+        });
+      } else {
+        input = document.createElement("input");
+        input.type = f.type || "text";
+        if (f.max) input.maxLength = f.max;
+        if (f.min !== undefined) input.min = f.min;
+        if (f.maxValue !== undefined) input.max = f.maxValue;
+      }
+
+      input.id = "dlg-" + f.id;
+      input.value = f.value === undefined ? "" : f.value;
+      holder.appendChild(label);
+      holder.appendChild(input);
+    });
+
+    dialogDone = done;
+    dialog.hidden = false;
+    const first = holder.querySelector("input, select");
+    if (first) first.focus();
+  }
+
+  function closeDialog() { dialog.hidden = true; dialogDone = null; }
+
+  $("dialog-form").addEventListener("submit", function (e) {
+    e.preventDefault();
+    const values = {};
+    $("dialog-fields").querySelectorAll("input, select").forEach(function (el) { values[el.id.slice(4)] = el.value; });
+    const error = dialogDone ? dialogDone(values) : "";
+    if (error) { $("dialog-error").textContent = error; return; }
+    closeDialog();
+  });
+
+  $("dialog-cancel").addEventListener("click", closeDialog);
+  dialog.addEventListener("keydown", function (e) { if (e.key === "Escape") closeDialog(); });
+
+  function askText() {
+    openDialog("Text at the selected note", [
+      { id: "text", label: "Text (leave empty to take the text away)", max: 80 },
+      { id: "place", label: "Place", type: "select", options: [["above", "above the staff"], ["below", "below the staff"]] }
+    ], function (v) {
+      run({ op: "text", text: v.text, place: v.place });
+      return "";
+    });
+  }
+
+  function askTempo() {
+    openDialog("Tempo mark at the selected note", [
+      { id: "bpm", label: "Quarter notes per minute (20 to 400, empty for text only)", type: "number", min: 20, maxValue: 400 },
+      { id: "text", label: "Text, e.g. Andante (leave both empty to take the mark away)", max: 40 }
+    ], function (v) {
+      const bpm = v.bpm === "" ? 0 : parseInt(v.bpm, 10);
+      if (isNaN(bpm) || (bpm !== 0 && (bpm < 20 || bpm > 400))) return "The tempo can be 20 to 400.";
+      run({ op: "tempo", bpm: bpm, text: v.text });
+      return "";
+    });
+  }
 
   // ---- the key list: all major and minor keys, by number of sharps or flats ----
   (function fillKeys() {
