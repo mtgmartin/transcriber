@@ -42,7 +42,7 @@ jobs:
           # pluginval.exe is a GUI-subsystem app, so PowerShell would not wait for it or set
           # $LASTEXITCODE; Start-Process -Wait gives the real exit code.
           $p = Start-Process -FilePath ./pluginval/pluginval.exe -NoNewWindow -Wait -PassThru `
-                 -ArgumentList @("--strictness-level", "5", "--verbose", "--validate", "`"$env:VST3_PATH`"")
+                 -ArgumentList @("--strictness-level", "8", "--verbose", "--validate", "`"$env:VST3_PATH`"")
           if ($p.ExitCode -ne 0) { throw "pluginval failed with exit code $($p.ExitCode)" }
           Write-Host "pluginval passed"
 

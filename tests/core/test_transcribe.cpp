@@ -8,6 +8,7 @@
 #include "core/Notation.h"
 #include "XmlCheck.h"
 
+#include <chrono>
 #include <random>
 #include <set>
 
@@ -542,6 +543,107 @@ namespace
         wild.set ("transpose", -100);
         CHECK_EQ (TranscriptionSettings::fromJson (wild).transpose, -48);
         CHECK (! (TranscriptionSettings() == custom));
+    }
+
+    //==========================================================================
+    // Phase 9: ten minute songs and dense MIDI through every pipeline
+
+    void testTenMinuteSongs()
+    {
+        std::mt19937 rng (41);
+        const auto seconds = [] (std::chrono::steady_clock::time_point since) { return std::chrono::duration<double> (std::chrono::steady_clock::now() - since).count(); };
+
+        // 10 minutes at 120 bpm: 300 bars of 4/4
+        std::vector<N> piano, riff, line, kit;
+
+        for (int beat = 0; beat < 1200; ++beat)
+        {
+            const double b = beat;
+            piano.push_back ({ 60 + (int) (rng() % 14), b, 0.5 });
+            piano.push_back ({ 64 + (int) (rng() % 14), b + 0.5, 0.5 });
+            piano.push_back ({ 40 + (int) (rng() % 12), b, 0.9 });
+            riff.push_back ({ 40 + (int) (rng() % 36), b, 0.5 });
+            riff.push_back ({ 40 + (int) (rng() % 36), b + 0.5, 0.5 });
+            line.push_back ({ 28 + (int) (rng() % 26), b, 0.95 });
+            kit.push_back ({ 42, b, 0.2 });
+            kit.push_back ({ 42, b + 0.5, 0.2 });
+
+            if (beat % 2 == 0)
+                kit.push_back ({ 36, b, 0.2 });
+            else
+                kit.push_back ({ 38, b, 0.2 });
+        }
+
+        const auto take = [] (const std::vector<N>& notes)
+        {
+            std::vector<N> copy = notes;
+            ResolvedCapture rc;
+
+            for (const auto& n : copy)
+            {
+                ResolvedNote r;
+                r.onPpq = n.start;
+                r.offPpq = n.start + n.dur;
+                r.pitch = n.pitch;
+                r.velocity = n.vel;
+                rc.notes.push_back (r);
+            }
+
+            rc.lengthPpq = 1200.0;
+
+            for (double b = 0.0; b < 1200.0 - 1.0e-9; b += 4.0)
+                rc.bars.push_back ({ b, 4, 4 });
+
+            rc.tempoMap.push_back ({ 0.0, 120.0 });
+            return rc;
+        };
+
+        const auto started = std::chrono::steady_clock::now();
+        auto t = std::chrono::steady_clock::now();
+        const auto pianoScore = transcribePiano (take (piano), {});
+        std::printf ("    10 minutes of piano (%d notes): %.1f s, %d measures\n", pianoScore.report.notes, seconds (t), pianoScore.report.measures);
+        CHECK_EQ (pianoScore.report.measures, 300);
+        CHECK (pianoScore.score.validate().empty());
+        CHECK (xmlcheck::checkXml (scoreToMei (pianoScore.score, {})).wellFormed);
+
+        t = std::chrono::steady_clock::now();
+        const auto guitar = transcribeFretted (take (riff), {}, InstrumentType::guitar);
+        std::printf ("    10 minutes of guitar: %.1f s\n", seconds (t));
+        CHECK_EQ (guitar.report.measures, 300);
+        CHECK (guitar.score.validate().empty());
+
+        t = std::chrono::steady_clock::now();
+        const auto bass = transcribeFretted (take (line), {}, InstrumentType::bass);
+        std::printf ("    10 minutes of bass: %.1f s\n", seconds (t));
+        CHECK (bass.score.validate().empty());
+
+        t = std::chrono::steady_clock::now();
+        const auto drums = transcribeDrums (take (kit), {}, drumPreset ("gm"));
+        std::printf ("    10 minutes of drums: %.1f s\n", seconds (t));
+        CHECK_EQ (drums.report.measures, 300);
+        CHECK (drums.score.validate().empty());
+        CHECK (seconds (started) < 120.0);
+
+        // dense MIDI: a hundred notes in every beat of two minutes, as every instrument
+        std::vector<N> dense;
+
+        for (int beat = 0; beat < 240; ++beat)
+            for (int k = 0; k < 100; ++k)
+                dense.push_back ({ 30 + (int) (rng() % 70), beat + (double) (rng() % 1000) / 1000.0, 0.02 + (double) (rng() % 400) / 1000.0, 1 + (int) (rng() % 127) });
+
+        auto crowd = take (dense);
+        crowd.lengthPpq = 240.0;
+        crowd.bars.resize (60);
+        t = std::chrono::steady_clock::now();
+        const auto d1 = transcribePiano (crowd, {});
+        const auto d2 = transcribeFretted (crowd, {}, InstrumentType::guitar);
+        const auto d3 = transcribeDrums (crowd, {}, drumPreset ("gm"));
+        std::printf ("    dense MIDI (24000 notes) as piano, guitar and drums: %.1f s\n", seconds (t));
+        CHECK (d1.score.validate().empty() && d2.score.validate().empty() && d3.score.validate().empty());
+        CHECK (xmlcheck::checkXml (scoreToMei (d1.score, {})).wellFormed);
+        CHECK (xmlcheck::checkXml (scoreToMei (d2.score, {})).wellFormed);
+        CHECK (xmlcheck::checkXml (scoreToMei (d3.score, {})).wellFormed);
+        CHECK (seconds (t) < 120.0);
     }
 
     void testBeatGroups()
@@ -1377,6 +1479,7 @@ namespace
 #endif
 
     REGISTER (testCleanNotes, "transcribe: clean-up");
+    REGISTER (testTenMinuteSongs, "stress: ten minute songs and dense MIDI through every pipeline");
     REGISTER (testTranspose, "transcribe: transposition in semitones");
     REGISTER (testFineGrids, "transcribe: 1/64 and 1/128 grids");
     REGISTER (testBuildBars, "transcribe: bars");

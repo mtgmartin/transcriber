@@ -7,7 +7,9 @@
 #include "StateCodec.h"
 #include "TestSupport.h"
 
+#include <atomic>
 #include <random>
+#include <thread>
 
 using namespace trs;
 
@@ -855,6 +857,174 @@ namespace
         CHECK_EQ (service.getStatus().getProperty ("tunings", {}).size(), 0);
     }
 
+
+    //==========================================================================
+    // Phase 9: stress
+
+    // five plugin instances at once (five tracks), each recording its own take on its own thread
+    void testFiveInstancesAtOnce()
+    {
+        constexpr int count = 5;
+        std::vector<std::unique_ptr<CaptureService>> services;
+        std::atomic<int> failures { 0 };
+
+        for (int i = 0; i < count; ++i)
+            services.push_back (std::make_unique<CaptureService>());
+
+        std::vector<std::thread> threads;
+
+        for (int i = 0; i < count; ++i)
+        {
+            threads.emplace_back ([&, i]
+            {
+                record (*services[(size_t) i], 4 + i, i);
+
+                if (! waitForVersions (*services[(size_t) i], 1))
+                    ++failures;
+            });
+        }
+
+        for (auto& t : threads)
+            t.join();
+
+        CHECK_EQ ((int) failures, 0);
+
+        for (int i = 0; i < count; ++i)
+        {
+            auto& s = *services[(size_t) i];
+            CHECK_EQ (s.getNumVersions(), 1);
+            const auto status = s.getStatus();
+            CHECK_EQ ((int) status.getProperty ("versions", {}).getArray()->getFirst().getProperty ("notes", 0), 3 * (4 + i));
+            CHECK (status.getProperty ("scoreText", {}).toString().isNotEmpty());
+
+            // each one is saved and loaded on its own
+            juce::MemoryBlock saved;
+            s.saveState (saved);
+            CaptureService again;
+            again.loadState (saved.getData(), saved.getSize());
+            CHECK_EQ (again.getNumVersions(), 1);
+        }
+    }
+
+    // play and stop again and again: every recording with notes is a take, a silent one is none
+    void testRapidPlayAndStop()
+    {
+        CaptureService service;
+        CaptureModel unused;
+        sim::Host host (service.getEngine(), unused, 48000.0, 256, false);
+        host.setBpm (180.0);
+        std::vector<sim::Note> notes { { 0.0, 0.5, 60, 100 }, { 0.5, 1.0, 64, 100 } };
+        int expected = 0;
+
+        for (int i = 0; i < 60; ++i)
+        {
+            const bool silent = i % 2 == 1;
+            host.setMessages (silent ? std::vector<sim::Msg>() : sim::toMessages (notes));
+            service.arm();
+            host.play (0.0);
+            host.run (1.5);
+            host.stop();
+
+            if (! silent)
+            {
+                ++expected;
+                CHECK (waitForVersions (service, expected));
+            }
+            else
+            {
+                juce::Thread::sleep (20);
+            }
+        }
+
+        CHECK_EQ (service.getNumVersions(), expected);
+        CHECK_EQ (versionCount (service), expected);
+
+        juce::MemoryBlock saved;
+        service.saveState (saved);
+        CaptureService again;
+        again.loadState (saved.getData(), saved.getSize());
+        CHECK_EQ (again.getNumVersions(), expected);
+    }
+
+    // dense MIDI: hundreds of notes in every beat, many of them the same note at the same time
+    void testDenseMidi()
+    {
+        CaptureService service;
+        CaptureModel unused;
+        sim::Host host (service.getEngine(), unused, 48000.0, 256, false);
+        host.setBpm (140.0);
+        std::mt19937 rng (17);
+        std::vector<sim::Note> notes;
+
+        for (int beat = 0; beat < 32; ++beat)
+            for (int k = 0; k < 150; ++k)
+            {
+                const double on = beat + (double) (rng() % 1000) / 1000.0;
+                notes.push_back ({ on, on + 0.05 + (double) (rng() % 300) / 1000.0, 30 + (int) (rng() % 60), 1 + (int) (rng() % 127) });
+            }
+
+        host.setMessages (sim::toMessages (notes));
+        service.arm();
+        host.play (0.0);
+        host.run (33.0);
+        host.stop();
+        CHECK (waitForVersions (service, 1));
+
+        // every instrument can write it, without taking long, and the page can get the score
+        const auto started = juce::Time::getMillisecondCounterHiRes();
+
+        for (const char* instrument : { "piano", "guitar", "bass", "drums" })
+        {
+            service.setInstrument (instrument);
+            const auto status = service.getStatus();
+            CHECK (status.getProperty ("scoreText", {}).toString().isNotEmpty());
+            CHECK (service.getMei().getProperty ("mei", {}).toString().isNotEmpty());
+        }
+
+        std::printf ("    dense MIDI (4800 notes, 32 beats) in four instruments: %.0f ms\n", juce::Time::getMillisecondCounterHiRes() - started);
+        CHECK (juce::Time::getMillisecondCounterHiRes() - started < 120000.0);
+    }
+
+    // a ten minute song: it is recorded, written, saved and loaded within a sensible time and size
+    void testTenMinuteTake()
+    {
+        CaptureService service;
+        CaptureModel unused;
+        sim::Host host (service.getEngine(), unused, 48000.0, 256, false);
+        host.setBpm (120.0);
+        std::mt19937 rng (23);
+        std::vector<sim::Note> notes;
+
+        for (int beat = 0; beat < 1200; ++beat)
+        {
+            notes.push_back ({ (double) beat, beat + 0.9, 48 + (int) (rng() % 12), 90 });
+            notes.push_back ({ beat + 0.5, beat + 0.95, 60 + (int) (rng() % 24), 100 });
+
+            if (beat % 4 == 0)
+                notes.push_back ({ (double) beat, beat + 3.5, 36 + (int) (rng() % 7), 85 });
+        }
+
+        host.setMessages (sim::toMessages (notes));
+        service.arm();
+        const auto started = juce::Time::getMillisecondCounterHiRes();
+        host.play (0.0);
+        host.run (1201.0);
+        host.stop();
+        CHECK (waitForVersions (service, 1));
+        const auto status = service.getStatus();
+        CHECK (status.getProperty ("scoreText", {}).toString().isNotEmpty());
+        CHECK ((int) status.getProperty ("transcription", {}).getProperty ("measures", 0) >= 300);
+
+        juce::MemoryBlock saved;
+        service.saveState (saved);
+        CaptureService again;
+        again.loadState (saved.getData(), saved.getSize());
+        CHECK_EQ (again.getNumVersions(), 1);
+        std::printf ("    ten minute take: %.0f ms, saved state %d KB\n", juce::Time::getMillisecondCounterHiRes() - started, (int) (saved.getSize() / 1024));
+        CHECK (saved.getSize() < 5 * 1024 * 1024);
+        CHECK (juce::Time::getMillisecondCounterHiRes() - started < 120000.0);
+    }
+
     struct Test { const char* name; void (*fn)(); };
 
 
@@ -874,6 +1044,10 @@ namespace
         { "service: selecting several notes", testSelecting },
         { "service: transposition", testTransposing },
         { "service: tunings", testTunings },
+        { "stress: five instances at once", testFiveInstancesAtOnce },
+        { "stress: rapid play and stop", testRapidPlayAndStop },
+        { "stress: dense MIDI", testDenseMidi },
+        { "stress: a ten minute take", testTenMinuteTake },
     };
 }
 
