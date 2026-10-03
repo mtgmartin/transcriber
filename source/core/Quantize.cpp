@@ -37,7 +37,7 @@ namespace
 
 int straightSlot (const TranscriptionSettings& s)
 {
-    const auto grid = s.grid >= 32 ? 32 : s.grid >= 16 ? 16 : s.grid >= 8 ? 8 : 4;
+    const auto grid = s.grid >= 128 ? 128 : s.grid >= 64 ? 64 : s.grid >= 32 ? 32 : s.grid >= 16 ? 16 : s.grid >= 8 ? 8 : 4;
     return 4 * ticksPerQuarter / grid;
 }
 

@@ -201,7 +201,7 @@ namespace detail
         int tupletCounter = 0;
         int beamCounter = 0;
 
-        // Triplet beats in this bar, with the size of their slots: the biggest of 320, 160 and 80
+        // Triplet beats in this bar, with the size of their slots: the biggest of 320, 160, 80, 40 and 20
         // that every note boundary inside the beat falls on.
         std::vector<std::pair<int64_t, int>> tripletBeatsFor (const Bar& bar, int64_t offset,
                                                               const std::vector<std::vector<Segment>>& perVoice) const
@@ -227,7 +227,7 @@ namespace detail
                             if (rel <= 0 || rel >= ticksPerQuarter)
                                 continue;
 
-                            while (unit > 80 && rel % unit != 0)
+                            while (unit > 20 && rel % unit != 0)
                                 unit /= 2;
                         }
                     }
@@ -494,6 +494,8 @@ namespace detail
         report.mergedNotes += std::max<int> (0, (int) p.clean.size() - (int) p.quantized.notes.size());
         report.offGridNotes = p.quantized.offGrid;
         report.tripletBeats = p.quantized.tripletBeats;
+        report.grid = settings.grid;
+        report.shortNotes = (int) std::count_if (p.quantized.notes.begin(), p.quantized.notes.end(), [] (const QNote& q) { return q.dur < ticksPerQuarter / 8; });
 
         int64_t lastEnd = 0;
 
@@ -602,6 +604,10 @@ namespace detail
         if (report.offGridNotes > 0)
             report.warnings.push_back (report.offGridNotes == 1 ? "1 note was far from the grid and was moved to the nearest position."
                                                                   : std::to_string (report.offGridNotes) + " notes were far from the grid and were moved to the nearest position.");
+
+        // a grid finer than a 32nd keeps the small differences of a human player as tiny notes
+        if (report.grid >= 64 && report.shortNotes >= 4 && report.shortNotes * 10 >= report.notes)
+            report.warnings.push_back (std::to_string (report.shortNotes) + " notes are shorter than a 32nd note: is the grid of 1/" + std::to_string (report.grid) + " too fine for this playing?");
 
         if (report.mergedNotes > 0)
             report.warnings.push_back (report.mergedNotes == 1 ? "1 note of no length or played twice at once was merged."

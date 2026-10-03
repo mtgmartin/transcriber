@@ -44,7 +44,7 @@ namespace
 
     bool validValue (int dur, int dots)
     {
-        return dur >= 1 && dur <= 64 && (dur & (dur - 1)) == 0 && dots >= 0 && dots <= 2;
+        return dur >= 1 && dur <= 128 && (dur & (dur - 1)) == 0 && dots >= 0 && dots <= 2;
     }
 
     int64_t valueTicks (int dur, int dots)

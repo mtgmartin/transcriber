@@ -71,6 +71,8 @@
       <button type="button" data-op="duration" data-dur="8" title="Eighth note (4)" disabled>1/8</button>
       <button type="button" data-op="duration" data-dur="16" title="Sixteenth note (3)" disabled>1/16</button>
       <button type="button" data-op="duration" data-dur="32" title="Thirty-second note (2)" disabled>1/32</button>
+      <button type="button" data-op="duration" data-dur="64" title="Sixty-fourth note (1)" disabled>1/64</button>
+      <button type="button" data-op="duration" data-dur="128" title="Hundred-twenty-eighth note" disabled>1/128</button>
       <button type="button" data-op="dot" title="Add or take away the dot (.)" disabled>Dot</button>
       <span class="sep"></span>
       <button type="button" data-op="tie" title="Tie to the next note of the same pitch (T)" disabled>Tie</button>
@@ -172,7 +174,7 @@
     <p id="edited-note" class="dim" hidden>You have edited this score, so the reading and the notation settings are locked.
        <button id="discard-edits" type="button">Discard my edits</button></p>
     <p id="selection-info" class="dim">Click a note or a rest to see what it is.</p>
-    <p class="dim" id="edit-help">Keys: arrows change the pitch, A to G enter a note, 2 to 7 set the length, T ties, J writes the pitch the other way, X turns the stem, Delete makes a rest, Ctrl+Z undoes.
+    <p class="dim" id="edit-help">Keys: arrows change the pitch, A to G enter a note, 1 to 7 set the length (1 is a 64th), T ties, J writes the pitch the other way, X turns the stem, Delete makes a rest, Ctrl+Z undoes.
        Click a chord, then one of its notes, to select just that note.</p>
   </section>
 
@@ -203,7 +205,7 @@
       </select>
       <label for="set-grid">Grid</label>
       <select id="set-grid">
-        <option value="4">1/4</option><option value="8">1/8</option><option value="16">1/16</option><option value="32">1/32</option>
+        <option value="4">1/4</option><option value="8">1/8</option><option value="16">1/16</option><option value="32">1/32</option><option value="64">1/64</option><option value="128">1/128</option>
       </select>
       <label><input type="checkbox" id="set-triplets"> Triplets</label>
       <span id="grp-split">

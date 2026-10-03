@@ -4,7 +4,9 @@
 #include "TranscribeSupport.h"
 
 #include "MidiReader.h"
+#include "core/Mei.h"
 #include "core/Notation.h"
+#include "XmlCheck.h"
 
 #include <random>
 #include <set>
@@ -363,6 +365,114 @@ namespace
         CHECK_EQ ((int) pieces.size(), 1);
         CHECK_EQ (pieces[0].groupStart, (int64_t) 0);
         CHECK_EQ (pieces[0].groupTicks, (int64_t) 480);
+    }
+
+    //==========================================================================
+    // Phase 8c: grids finer than a 32nd (1/64 and 1/128)
+
+    void testFineGrids()
+    {
+        const std::vector<std::pair<int64_t, int>> none;
+
+        // written values down to a 128th (30 ticks); the strongest beat inside a length is where it is cut
+        CHECK_STR (describe (splitLength (0, 30, 4, 4, 3840, none, false)).c_str(), "0/30:128");
+        CHECK_STR (describe (splitLength (30, 30, 4, 4, 3840, none, false)).c_str(), "30/30:128");
+        CHECK_STR (describe (splitLength (0, 45, 4, 4, 3840, none, false)).c_str(), "0/45:128.");
+        CHECK_STR (describe (splitLength (30, 60, 4, 4, 3840, none, false)).c_str(), "30/30:128~ 60/30:128");
+        CHECK_STR (describe (splitLength (60, 90, 4, 4, 3840, none, false)).c_str(), "60/90:64.");
+        CHECK_STR (describe (splitLength (90, 150, 4, 4, 3840, none, false)).c_str(), "90/30:128~ 120/120:32");
+        CHECK_STR (describe (splitLength (0, 30, 4, 4, 3840, none, true)).c_str(), "0/30:128");
+
+        // triplets of 64ths (40 ticks) and 128ths (20)
+        const std::vector<std::pair<int64_t, int>> t40 { { 0, 40 } };
+        CHECK_STR (describe (splitLength (0, 40, 4, 4, 3840, t40, false)).c_str(), "0/40:64t");
+        CHECK_STR (describe (splitLength (40, 80, 4, 4, 3840, t40, false)).c_str(), "40/80:32t");
+        const std::vector<std::pair<int64_t, int>> t20 { { 0, 20 } };
+        CHECK_STR (describe (splitLength (0, 20, 4, 4, 3840, t20, false)).c_str(), "0/20:128t");
+        CHECK_STR (describe (splitLength (20, 40, 4, 4, 3840, t20, false)).c_str(), "20/40:64t");
+
+        // the slots of the grids
+        TranscriptionSettings s;
+        s.grid = 64;
+        CHECK_EQ (straightSlot (s), 60);
+        CHECK_EQ (tripletSlot (s), 40);
+        s.grid = 128;
+        CHECK_EQ (straightSlot (s), 30);
+        CHECK_EQ (tripletSlot (s), 20);
+
+        // a note a 64th into the beat: a 32nd grid puts it on a 32nd, the finer grids keep it
+        const auto bars = fourFour (2);
+        s.triplets = false;
+        s.grid = 32;
+        CHECK_EQ (quantize ({ rn (60, 0.0625, 0.125) }, bars, s).notes[0].on, (int64_t) 120);
+        s.grid = 64;
+        auto q = quantize ({ rn (60, 0.0625, 0.125) }, bars, s);
+        CHECK_EQ (q.notes[0].on, (int64_t) 60);
+        CHECK_EQ (q.notes[0].dur, (int64_t) 60);
+        s.grid = 128;
+        q = quantize ({ rn (60, 0.03125, 0.0625) }, bars, s);
+        CHECK_EQ (q.notes[0].on, (int64_t) 30);
+        CHECK_EQ (q.notes[0].dur, (int64_t) 30);
+
+        // triplets of 64ths in a beat
+        s.grid = 64;
+        s.triplets = true;
+        q = quantize ({ rn (60, 0.0, 1.0 / 24), rn (62, 1.0 / 24, 2.0 / 24), rn (64, 2.0 / 24, 3.0 / 24), rn (65, 1.0, 2.0) }, bars, s);
+        CHECK_EQ (q.tripletBeats, 1);
+        CHECK_EQ (q.notes[1].on, (int64_t) 40);
+        CHECK_EQ (q.notes[2].on, (int64_t) 80);
+        CHECK_EQ (q.notes[1].dur, (int64_t) 40);
+
+        // a run of 64ths is written as 64ths, in the score, in the MEI and in the sentence of a click
+        const int scale[8] = { 60, 62, 64, 65, 67, 69, 71, 72 };
+        std::vector<ResolvedNote> run;
+        for (int i = 0; i < 8; ++i)
+            run.push_back (rn (scale[i], i * 0.0625, (i + 1) * 0.0625));
+
+        ResolvedCapture rc = capture ({}, 4.0);
+        rc.notes = run;
+        s.triplets = false;
+        const auto result = transcribePiano (rc, s);
+        CHECK (dumpScore (result.score).find ("C4/64 D4/64 E4/64 F4/64 G4/64 A4/64 B4/64 C5/64") != std::string::npos);
+        CHECK (scoreToMei (result.score, {}).find ("dur=\"64\"") != std::string::npos);
+        CHECK_EQ ((int) result.report.warnings.size(), 1);   // a whole take of 64ths: is the grid too fine?
+
+        // the same run on a 128th grid with 128th notes
+        ResolvedCapture fine = capture ({}, 4.0);
+        for (int i = 0; i < 8; ++i)
+            fine.notes.push_back (rn (scale[i], i * 0.03125, (i + 1) * 0.03125));
+
+        s.grid = 128;
+        const auto finest = transcribePiano (fine, s);
+        CHECK (dumpScore (finest.score).find ("C4/128 D4/128 E4/128 F4/128 G4/128 A4/128 B4/128 C5/128") != std::string::npos);
+        CHECK (scoreToMei (finest.score, {}).find ("dur=\"128\"") != std::string::npos);
+        CHECK (xmlcheck::checkXml (scoreToMei (finest.score, {})).wellFormed);
+
+        // a grid this fine for notes played a little unevenly: the report asks whether it is too fine
+        ResolvedCapture loose = capture ({}, 4.0);
+        for (int i = 0; i < 10; ++i)
+            loose.notes.push_back (rn (60, i * 0.5 + 0.0625 * (double) (i % 3), i * 0.5 + 0.0625 * (double) (i % 3) + 0.0625));
+
+        s.grid = 64;
+        bool asked = false;
+        for (const auto& w : transcribePiano (loose, s).report.warnings)
+            asked = asked || w.find ("too fine") != std::string::npos;
+        CHECK (asked);
+        s.grid = 16;
+        for (const auto& w : transcribePiano (loose, s).report.warnings)
+            CHECK (w.find ("too fine") == std::string::npos);
+
+        // the setting as JSON: 64 and 128 are kept, anything else is brought back
+        for (const int grid : { 64, 128 })
+        {
+            TranscriptionSettings custom;
+            custom.grid = grid;
+            CHECK_EQ (TranscriptionSettings::fromJson (custom.toJson()).grid, grid);
+        }
+
+        auto bad = Json::object();
+        bad.set ("grid", 100);
+        CHECK_EQ (TranscriptionSettings::fromJson (bad).grid, 16);
     }
 
     void testBeatGroups()
@@ -1198,6 +1308,7 @@ namespace
 #endif
 
     REGISTER (testCleanNotes, "transcribe: clean-up");
+    REGISTER (testFineGrids, "transcribe: 1/64 and 1/128 grids");
     REGISTER (testBuildBars, "transcribe: bars");
     REGISTER (testPickup, "transcribe: pickup bar");
     REGISTER (testQuantizeStraight, "transcribe: quantise straight");

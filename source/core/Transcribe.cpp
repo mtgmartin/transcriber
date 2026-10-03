@@ -28,7 +28,7 @@ TranscriptionSettings TranscriptionSettings::fromJson (const Json& j)
 {
     TranscriptionSettings s;
     const auto grid = (int) j.get ("grid").asInt (s.grid);
-    s.grid = grid == 4 || grid == 8 || grid == 16 || grid == 32 ? grid : s.grid;
+    s.grid = grid == 4 || grid == 8 || grid == 16 || grid == 32 || grid == 64 || grid == 128 ? grid : s.grid;
     s.triplets = j.get ("triplets").asBool (s.triplets);
     s.splitPoint = std::max (21, std::min (108, (int) j.get ("splitPoint").asInt (s.splitPoint)));
     s.autoPickup = j.get ("autoPickup").asBool (s.autoPickup);

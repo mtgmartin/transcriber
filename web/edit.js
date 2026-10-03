@@ -275,7 +275,7 @@
   })();
 
   // ---- keys ----
-  const durations = { "2": 32, "3": 16, "4": 8, "5": 4, "6": 2, "7": 1 };
+  const durations = { "1": 64, "2": 32, "3": 16, "4": 8, "5": 4, "6": 2, "7": 1 };
 
   document.addEventListener("keydown", function (e) {
     const t = e.target;

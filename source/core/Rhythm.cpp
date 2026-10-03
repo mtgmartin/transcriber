@@ -24,6 +24,7 @@ namespace
         { 360, 16, 1, 240 },  { 240, 16, 0, 240 },
         { 180, 32, 1, 120 },  { 120, 32, 0, 120 },
         { 90, 64, 1, 60 },    { 60, 64, 0, 60 },
+        { 45, 128, 1, 30 },   { 30, 128, 0, 30 },
     };
 
     bool isCompound (int num, int den)
@@ -54,7 +55,7 @@ namespace
     // How strong the metrical position is: the biggest unit it is a multiple of.
     int64_t strengthOf (int64_t position, bool compound)
     {
-        static const int64_t units[] = { 3840, 1920, 1440, 960, 480, 240, 120, 60 };
+        static const int64_t units[] = { 3840, 1920, 1440, 960, 480, 240, 120, 60, 30 };
 
         for (const auto u : units)
             if ((compound || u != 1440) && position % u == 0)
@@ -84,7 +85,7 @@ namespace
 
         int64_t cut = 0, cutStrength = 0;
 
-        for (int64_t b = (position / 60 + 1) * 60; b < position + length; b += 60)
+        for (int64_t b = (position / 30 + 1) * 30; b < position + length; b += 30)
         {
             const auto strength = strengthOf (b, compound);
 
@@ -120,7 +121,7 @@ namespace
 
         for (const auto& v : writtenValues)
         {
-            if (v.dots == 0 && v.ticks == written && v.dur <= 32)
+            if (v.dots == 0 && v.ticks == written)
             {
                 dur = v.dur;
                 return true;
@@ -185,9 +186,15 @@ namespace
 
             if (position == groupStart && piece == group)
             {
-                // a whole group of three slots is an ordinary value
-                decomposeStraight (position, piece, compound, out);
-                position += piece;
+                // whole groups of three slots are ordinary values: as many in a row as there are before the end of the beat
+                // (a rest after a short triplet run in a beat of 64th triplets is one rest, not six)
+                int64_t run = group;
+
+                while (position + run + group <= std::min (end, beatEnd))
+                    run += group;
+
+                decomposeStraight (position, run, compound, out);
+                position += run;
                 continue;
             }
 

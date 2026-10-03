@@ -632,6 +632,7 @@ namespace
             case 16: return "sixteenth";
             case 32: return "thirty-second";
             case 64: return "sixty-fourth";
+            case 128: return "128th";
             default: return "";
         }
     }

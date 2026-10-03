@@ -970,7 +970,7 @@ static void testRandomFrettedEdits()
             {
                 case 0: case 1: j = req ("pitch", id, "semitones", (int) (rng() % 5) - 2); break;
                 case 2: j = req ("pitch", id, "semitones", rng() % 2 == 0 ? 12 : -12); break;
-                case 3: j = req ("duration", id, "dur", 1 << (rng() % 6)); j.set ("dots", (int) (rng() % 2)); break;
+                case 3: j = req ("duration", id, "dur", 1 << (rng() % 8)); j.set ("dots", (int) (rng() % 2)); break;
                 case 4: j = req ("delete", id); break;
                 case 5: j = req ("letter", id); j.set ("letter", std::string (1, "ABCDEFG"[rng() % 7])); break;
                 case 6: j = req ("interval", id, "interval", 2 + (int) (rng() % 7)); break;
@@ -1163,7 +1163,7 @@ static void testRandomDrumEdits()
                 case 3: case 4: j = drumReq ("drumSet", id, drums[rng() % 10]); break;
                 case 5: j = req ("ghost", id); break;
                 case 6: j = req ("delete", id); break;
-                case 7: j = req ("duration", id, "dur", 1 << (rng() % 6)); j.set ("dots", (int) (rng() % 2)); break;
+                case 7: j = req ("duration", id, "dur", 1 << (rng() % 8)); j.set ("dots", (int) (rng() % 2)); break;
                 case 8: j = req ("tie", id); break;
                 case 9: j = req ("beam", id); j.set ("mode", std::string (rng() % 3 == 0 ? "break" : rng() % 2 == 0 ? "join" : "auto")); break;
                 case 10: j = req ("artic", id); j.set ("value", std::string (rng() % 2 == 0 ? "acc" : "marc")); break;
@@ -1756,7 +1756,7 @@ static void testRandomEdits()
             {
                 case 0: j = req ("pitch", id, "semitones", (int) (rng() % 5) - 2); break;
                 case 1: j = req ("pitch", id, "semitones", rng() % 2 == 0 ? 12 : -12); break;
-                case 2: j = req ("duration", id, "dur", 1 << (rng() % 6)); j.set ("dots", (int) (rng() % 2)); break;
+                case 2: j = req ("duration", id, "dur", 1 << (rng() % 8)); j.set ("dots", (int) (rng() % 2)); break;
                 case 3: j = req ("delete", id); break;
                 case 4: j = req ("letter", id); j.set ("letter", std::string (1, "ABCDEFG"[rng() % 7])); break;
                 case 5: j = req ("interval", id, "interval", 2 + (int) (rng() % 7)); break;
@@ -2479,7 +2479,7 @@ static void testRandomManyEdits()
             {
                 case 0: j = manyReq ("pitch", ids, "semitones", (rng() % 2 == 0 ? 1 : -1) * (1 + (int) (rng() % 2))); comparable = true; break;
                 case 1: j = manyReq ("pitch", ids, "semitones", rng() % 2 == 0 ? 12 : -12); comparable = true; break;
-                case 2: j = manyReq ("duration", ids, "dur", 1 << (rng() % 6)); break;
+                case 2: j = manyReq ("duration", ids, "dur", 1 << (rng() % 8)); break;
                 case 3: j = manyReq ("delete", ids); break;
                 case 4: j = manyReq ("interval", ids, "interval", 2 + (int) (rng() % 7)); comparable = true; break;
                 case 5: j = manyReq ("tie", ids); break;
@@ -2582,3 +2582,82 @@ static void testRandomManyEdits()
     CHECK (same > 50);
 }
 REGISTER (testRandomManyEdits, "edit: random edits of several notes equal the notes one after the other and undo in one step");
+
+//==============================================================================
+// Phase 8c: note values down to a 128th.
+static void testFineDurations()
+{
+    Session s (pianoScore ({ { p ("C4"), 0, 1 }, { p ("E4"), 1, 1 }, { p ("G4"), 2, 2 } }, 4.0, 0));
+    const auto first = idOf (s.score, 0);
+
+    CHECK (s.run (req ("duration", first, "dur", 64)).ok);
+    CHECK (right (s.score).find ("m1 C4/64") != std::string::npos);
+    CHECK_STR (problems (s.score).c_str(), "");
+    CHECK (scoreToMei (s.score, {}).find ("dur=\"64\"") != std::string::npos);
+
+    CHECK (s.run (req ("duration", first, "dur", 128)).ok);
+    CHECK (right (s.score).find ("m1 C4/128") != std::string::npos);
+    CHECK_STR (problems (s.score).c_str(), "");
+    CHECK (scoreToMei (s.score, {}).find ("dur=\"128\"") != std::string::npos);
+    CHECK (xmlcheck::checkXml (scoreToMei (s.score, {})).wellFormed);
+
+    // a dot on it, and the pitch of such a note still moves
+    CHECK (s.run (req ("dot", first)).ok);
+    CHECK (right (s.score).find ("m1 C4/128.") != std::string::npos);
+    CHECK (s.run (req ("pitch", first, "semitones", 2)).ok);
+    CHECK_STR (problems (s.score).c_str(), "");
+
+    // the next value does not exist
+    CHECK (! s.run (req ("duration", first, "dur", 256)).ok);
+
+    // several notes at once, and the click sentence
+    CHECK (s.run (manyReq ("duration", { first, idOf (s.score, events (s.score).size() - 2) }, "dur", 64)).ok);
+    CHECK_STR (problems (s.score).c_str(), "");
+    CHECK (describeNode (s.score, first).find ("sixty-fourth") != std::string::npos);
+}
+REGISTER (testFineDurations, "edit: note values down to a 128th");
+
+#ifdef TRANSCRIBER_FIXTURES_DIR
+// The clips of the Phase 8c test sheet: very short notes at the grids that can keep them.
+static void testFineClips()
+{
+    const auto run = midireader::read (std::string (TRANSCRIBER_FIXTURES_DIR) + "/t81-fine-run.mid");
+    CHECK (run.ok);
+    TranscriptionSettings fine;
+    fine.grid = 128;
+    auto result = transcribePiano (run.capture, fine);
+    const auto dump = dumpScore (result.score);
+    CHECK (dump.find ("( C4/64 D4/64 E4/64 F4/64 G4/64 A4/64 B4/64 C5/64 ) r/8 E4/4 ( C4/128 D4/128 E4/128 F4/128 G4/128 A4/128 B4/128 C5/128 ) r/16 r/8 G4/4") != std::string::npos);
+    CHECK (dump.find ("< ( C4/64 D4/64 E4/64 > < F4/64 G4/64 A4/64 ) > r/16 r/8 C4/4~ C4/2") != std::string::npos);
+    CHECK (xmlcheck::checkXml (scoreToMei (result.score, {})).wellFormed);
+
+    // a 32nd grid cannot keep them: notes pile up in chords and are reported as far from the grid
+    TranscriptionSettings coarse;
+    coarse.grid = 32;
+    const auto rough = transcribePiano (run.capture, coarse);
+    CHECK (rough.report.offGridNotes > 0);
+
+    // edits on notes that short
+    Session s (result.score);
+    CHECK (s.run (req ("pitch", idOf (s.score, 0), "semitones", 1)).ok);
+    CHECK (s.run (req ("duration", idOf (s.score, 0), "dur", 32)).ok);
+    CHECK (s.run (req ("delete", idOf (s.score, 3))).ok);
+    CHECK_STR (problems (s.score).c_str(), "");
+    CHECK (xmlcheck::checkXml (scoreToMei (s.score, {})).wellFormed);
+
+    // all the 64th notes: the same pitch, an octave up, as one step
+    const auto all = performEdit (s.score, s.undo, selectReq ("selectAll", idOf (s.score, 1))).selection;
+    CHECK (all.size() > 20);
+    CHECK (s.run (manyReq ("pitch", all, "semitones", 12)).ok);
+    CHECK_STR (problems (s.score).c_str(), "");
+
+    // drums: a roll in 64th notes
+    const auto roll = midireader::read (std::string (TRANSCRIBER_FIXTURES_DIR) + "/t82-drum-roll.mid");
+    CHECK (roll.ok);
+    TranscriptionSettings drumGrid;
+    drumGrid.grid = 64;
+    const auto drums = transcribeDrums (roll.capture, drumGrid, drumPreset ("gm"));
+    CHECK (dumpScore (drums.score).find ("( Snare/64 Snare/64 Snare/64 Snare/64 Snare/64 Snare/64 Snare/64 Snare/64 Snare/64 Snare/64 Snare/64 Snare/64 Snare/64 Snare/64 Snare/64 Snare/64 ) r/4 Crash_cymbal_1/4") != std::string::npos);
+}
+REGISTER (testFineClips, "edit: the very short notes of the Phase 8c test sheet");
+#endif

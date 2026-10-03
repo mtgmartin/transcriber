@@ -14,13 +14,13 @@
 namespace trs
 {
 
-// One quarter note is 960 ticks: every straight value down to a 64th (60) and every triplet value
-// (a third of a straight one) is a whole number of ticks.
+// One quarter note is 960 ticks: every straight value down to a 128th (30) and every triplet value
+// (a third of a straight one, down to 20) is a whole number of ticks.
 constexpr int ticksPerQuarter = 960;
 
 struct TranscriptionSettings
 {
-    int grid = 16;              // finest division kept: 4, 8, 16 or 32 (quarter ... 32nd notes)
+    int grid = 16;              // finest division kept: 4, 8, 16, 32, 64 or 128 (quarter ... 128th notes)
     bool triplets = true;       // a beat may use the triplet grid when it fits better
     int splitPoint = 60;        // piano: notes from here up go to the right hand
     bool autoPickup = true;     // a first bar that starts late becomes a pickup bar
@@ -77,6 +77,8 @@ struct TranscriptionReport
     int offGridNotes = 0;
     int tripletBeats = 0;
     int mergedNotes = 0;        // duplicates and zero-length notes that were dropped
+    int shortNotes = 0;         // notes shorter than a 32nd after quantising
+    int grid = 16;              // the grid the notes were quantised to
     int measures = 0;
     int maxVoices = 0;
 };
@@ -171,7 +173,7 @@ struct RhythmPiece
 {
     int64_t on = 0;             // ticks from the start of the bar
     int64_t ticks = 0;          // sounding length
-    int dur = 4;                // written value: 1, 2, 4, 8, 16, 32, 64
+    int dur = 4;                // written value: 1, 2, 4, 8, 16, 32, 64, 128
     int dots = 0;
     bool tuplet = false;        // 3 in the time of 2
     int64_t groupStart = -1;    // tuplet: where its group of three slots begins, from the bar start
@@ -184,7 +186,7 @@ struct RhythmPiece
 std::vector<int64_t> splitPointsFor (int num, int den, int64_t barLength);
 
 // Writes a length starting at `on` (ticks from the bar start) as pieces. `tripletBeats` holds the
-// bar-relative starts of the beats that use the triplet grid, with the size in ticks of their slots (320, 160 or 80). `isRest` applies the stricter rule for rests.
+// bar-relative starts of the beats that use the triplet grid, with the size in ticks of their slots (320, 160, 80, 40 or 20). `isRest` applies the stricter rule for rests.
 std::vector<RhythmPiece> splitLength (int64_t on, int64_t length, int num, int den, int64_t barLength,
                                       const std::vector<std::pair<int64_t, int>>& tripletBeats, bool isRest);
 
