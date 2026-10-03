@@ -89,3 +89,4 @@ button.danger { background: #5a2323; border-color: #f08a8a; }
 #drum-table .note-name { display: block; margin: 0; line-height: 1.1; font-size: 11px; }
 #drum-table select { max-width: 190px; }
 #drum-table button { padding: 3px 8px; }
+#drum-table-wrap { overflow-x: auto; }

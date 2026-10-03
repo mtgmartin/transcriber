@@ -159,6 +159,11 @@
     if (!m.key) { noteKey(""); return; }
     // another version: start at the top; the same version drawn again (zoom, settings): stay where you are
     if (m.key.split("#")[0] !== meiKey.split("#")[0]) { view.scrollTop = 0; view.scrollLeft = 0; selectedId = ""; info.textContent = "Click a note or a rest to see what it is."; }
+    // a selected note that is not in the new score (another instrument, other settings) is let go
+    if (selectedId && m.mei.indexOf('xml:id="' + selectedId + '"') < 0) {
+      selectedId = "";
+      info.textContent = "Click a note or a rest to see what it is.";
+    }
     meiKey = m.key;
     mei = m.mei;
     showEmpty(false);

@@ -304,7 +304,8 @@ function showTranscription(s) {
     lines.push((instrument === "bass" ? "Bass" : "Guitar") + " with tab · key: " + keyName(t.keyFifths, t.keyMinor) +
                (cfg.keyTonic < 0 ? ", detected" : ", set by you") + " · " + measures + edited);
   }
-  t.warnings.forEach(function (w) { lines.push("Note: " + w); });
+  // the notes missing from a drum map are shown with the map
+  t.warnings.forEach(function (w) { if (!(instrument === "drums" && w.indexOf("not in the drum map") >= 0)) lines.push("Note: " + w); });
   $("score-info").className = "result" + (t.warnings.length ? " warn" : "");
   $("score-info").textContent = lines.join("\n");
   if ($("score-details").open) $("score-text").textContent = s.scoreText || "";

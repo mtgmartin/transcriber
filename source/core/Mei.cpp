@@ -638,13 +638,14 @@ std::string describeNode (const Score& score, const std::string& id)
     else if (event->type == nodeType::chord)
     {
         std::string names;
+        const bool fretted = ! event->children.empty() && event->children.front().has ("course");
 
         for (const auto& c : event->children)
-            names += (names.empty() ? "" : " ") + pitchText (c);
+            names += (names.empty() ? "" : fretted ? ", " : " ") + pitchText (c);
 
         const bool drumChord = ! event->children.empty() && event->children.front().has ("drum");
         const bool tied = ! event->children.empty() && (event->children.front().prop ("tie").asString() == "i" || event->children.front().prop ("tie").asString() == "m");
-        add (value + (drumChord ? " hit " : " chord ") + names + (tied ? ", tied to the next" : ""));
+        add (value + (drumChord ? " hit " : fretted ? " chord: " : " chord ") + names + (tied ? ", tied to the next" : ""));
     }
     else
     {

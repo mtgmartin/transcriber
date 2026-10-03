@@ -148,8 +148,8 @@ TranscriptionResult transcribeDrums (const ResolvedCapture& capture, const Trans
         if (unmapped.size() > 6)
             list += ", ...";
 
-        report.warnings.push_back (std::to_string (count) + " notes are not in the drum map (MIDI note " + list
-                                   + ") and were left out. Add them to the map to write them.");
+        report.warnings.push_back ((count == 1 ? "1 note is" : std::to_string (count) + " notes are") + std::string (" not in the drum map (MIDI note ") + list
+                                   + (count == 1 ? ") and was left out. Add it to the map to write it." : ") and were left out. Add them to the map to write them."));
     }
 
     addCommonWarnings (report);

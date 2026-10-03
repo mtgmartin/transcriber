@@ -1,6 +1,6 @@
 # Transcriber build plan
 
-Last updated 2026-10-02. **Current state: Phases 0-5 done and tested in Live. Phase 6 (drums, guitar, bass with tab) is built (build 0.6.0); its Live check (docs/phase6-tests.md) and the user's reference clips are still to come.**
+Last updated 2026-10-02. **Current state: Phases 0-6 done and tested in Live (the tab still to be confirmed by the user's own riffs). Phase 7 (editor) is next; the user's reference clips are still to come.**
 
 Transcriber is a Windows VST3 plugin for Ableton Live 11. It records the MIDI that plays on its track,
 in Session or Arrangement View, and turns it into editable sheet music for piano, drum kit or
@@ -461,6 +461,7 @@ Tools in `tools/live/`. Copy them to the scratchpad or run them in place.
   - Space is awkward (the plugin window takes focus); click the transport buttons instead. The orange *Back to Arrangement* button (2215, 145) returns a track from Session clips to its Arrangement.
   - `$input` is a reserved PowerShell variable; don't use it in scripts.
   - Live auto-hides plugin windows of unselected tracks.
+  - Phase 6 window (taller layout, Score panel on top): Record is at about (1292, 742) for piano/drums and (1292, 782) with the Notation row on two lines; `tools\live\record-slot.ps1` takes the position. The plugin window is resized only by dragging its exact corner (about 1-3 px outside the border). Live comes back small from the taskbar: maximise it (button at about (1440, 16)). A file dialog with a pre-filled name needs Ctrl+A before pasting a path.
   - Space stops the transport but **Session clips keep their playing state**. Use Stop All Clips, the master track's clip-stop button.
   - The global tempo field drag is extremely sensitive (it went to 999 BPM). Type values instead.
   - Insert time-signature markers via *Create → Insert Time Signature Change* (at the insert marker), then type e.g. `3/4`.
@@ -479,6 +480,6 @@ Tools in `tools/live/`. Copy them to the scratchpad or run them in place.
 
 ## 9. Status (update every session)
 
-- **Done:** Phases 0-5 with their Live tests. Phase 6 code: build 0.6.0 (102 core tests); its Live check is next.
-- **Waiting on the user:** (1) install 0.6.0 (admin PowerShell, Live closed, `scripts\install.ps1`); (2) the reference clips: about 10 clips exported from Live (.mid) with the notation you expect; (3) later, the user's own guitar riffs and basslines to confirm the tab (Phase 6 gate).
-- **Next:** the Phase 6 Live check (`docs/phase6-tests.md`, then `docs/phase6-results.md`), then Phase 7 (editor).
+- **Done:** Phases 0-6 with their Live tests (6: `docs/phase6-results.md`, build 0.6.0 verified in Live; 0.6.1 has small page and wording fixes, not yet seen in Live). 102 core tests.
+- **Waiting on the user:** (1) the reference clips: about 10 clips exported from Live (.mid) with the notation you expect; (2) your own guitar riffs and basslines to confirm the tab (Phase 6 gate); installing 0.6.1 is optional.
+- **Next:** Phase 7 (editor, in four parts 7a-7d). Set `scoreEdited` when a command runs; every operation gets an apply-then-undo unit test.

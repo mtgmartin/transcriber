@@ -330,9 +330,9 @@ TranscriptionResult transcribeFretted (const ResolvedCapture& capture, const Tra
     {
         const auto low = open.front();
         const auto high = open.back() + maxFret;
-        report.warnings.push_back (std::to_string (notPlayable) + " notes cannot be played on a " + std::to_string (open.size())
-                                   + "-string " + instrumentName (type) + " (MIDI notes " + std::to_string (low) + "-" + std::to_string (high)
-                                   + ", or too many at once) and were left out.");
+        report.warnings.push_back ((notPlayable == 1 ? "1 note cannot" : std::to_string (notPlayable) + " notes cannot") + std::string (" be played on a ")
+                                   + std::to_string (open.size()) + "-string " + instrumentName (type) + " (MIDI notes " + std::to_string (low) + "-"
+                                   + std::to_string (high) + ", or too many at once) and " + (notPlayable == 1 ? "was" : "were") + " left out.");
     }
 
     addCommonWarnings (report);

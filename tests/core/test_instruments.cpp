@@ -972,7 +972,18 @@ namespace
 
         CHECK (single.find ("Tab") == 0);
         CHECK (single.find ("string 6 fret 0") != std::string::npos);
-        CHECK (chord.find ("chord") != std::string::npos);
+        CHECK (chord.find ("chord: string") != std::string::npos);
+        CHECK (chord.find (", string") != std::string::npos);
+
+        // one note: the singular
+        TranscriptionResult one;
+        frettedOf (captureOf ({ { 40, 0.0, 1.0 }, { 20, 1.0, 1.0 } }, 4.0), InstrumentType::guitar, {}, &one);
+        CHECK (one.report.warnings[0].find ("1 note cannot be played on a 6-string guitar") != std::string::npos);
+        CHECK (one.report.warnings[0].find ("and was left out") != std::string::npos);
+
+        TranscriptionResult oneDrum;
+        drumsOf (tsupport::capture ({ { 38, 0.0, 0.1 }, { 60, 1.0, 0.1 } }), drumPreset ("gm"), {}, &oneDrum);
+        CHECK_STR (oneDrum.report.warnings[0].c_str(), "1 note is not in the drum map (MIDI note 60) and was left out. Add it to the map to write it.");
     }
 
     void testFixturesGiveValidMei()

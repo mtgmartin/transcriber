@@ -593,10 +593,12 @@ namespace detail
     inline void addCommonWarnings (TranscriptionReport& report)
     {
         if (report.offGridNotes > 0)
-            report.warnings.push_back (std::to_string (report.offGridNotes) + " notes were far from the grid and were moved to the nearest position.");
+            report.warnings.push_back (report.offGridNotes == 1 ? "1 note was far from the grid and was moved to the nearest position."
+                                                                  : std::to_string (report.offGridNotes) + " notes were far from the grid and were moved to the nearest position.");
 
         if (report.mergedNotes > 0)
-            report.warnings.push_back (std::to_string (report.mergedNotes) + " notes of no length or played twice at once were merged.");
+            report.warnings.push_back (report.mergedNotes == 1 ? "1 note of no length or played twice at once was merged."
+                                                                  : std::to_string (report.mergedNotes) + " notes of no length or played twice at once were merged.");
     }
 
     // Puts the part into the score and fills the result.
