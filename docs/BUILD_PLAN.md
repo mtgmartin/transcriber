@@ -481,6 +481,7 @@ Tools in `tools/live/`. Copy them to the scratchpad or run them in place.
 - **Live behaviour to remember:**
   - Phase 2 coordinates (2560x1440 monitor): the plugin window is resized tall (drag its corner down) so the Capture panel is fixed: Record (1292, 206), Clear (1478, 206), One loop (1314, 248), As played (1404, 248), Detect again (1692, 248). Transport Play (1114, 60), Stop (1136, 60). In Session View, track 7's slots are at x = 983, y = 121 + 17.5 per slot. These move if the layout changes; take a screenshot first.
   - Live **does not call the plugin while the transport is stopped** (idle instrument), so a command from the page only reaches the audio thread at the next play.
+  - Keys go to the window that has the focus: click on the plugin page header (about 1800, 60) before sending Ctrl+Z etc., or they reach Live's own undo.
   - Graceful Live restart: `(Get-Process -Id <id>).CloseMainWindow()`, then `Start-Process` the exe with the .als path (Ableton Live 11 Suite.exe is in C:ProgramDataAbletonive 11 suiteprogram) and wait with a monitor until the main window title appears. dropdowns in the plugin page: click, press down/up once per entry (one `key` each, input.ps1 has no repeat count), then enter.
   - never end live with stop-process: the next start asks to recover (answer No); close its window instead. Phase 7 window: the plugin window opens at the top right (about x 1186-2286); scroll the page with the pointer over the Capture panel, not over the score. The key "." from input.ps1 arrives as Delete (use the Dot button). In Live's browser, search for a clip, expand the folder, then drag the file.
   - Space is awkward (the plugin window takes focus); click the transport buttons instead. The orange *Back to Arrangement* button (2215, 145) returns a track from Session clips to its Arrangement.
@@ -505,6 +506,6 @@ Tools in `tools/live/`. Copy them to the scratchpad or run them in place.
 
 ## 9. Status (update every session)
 
-- **Done:** Phases 0-6 with their Live tests (6: `docs/phase6-results.md`). Phase 7c code (build 0.9.0, 126 core tests): markings and text; its Live check is next. Phase 7a (build 0.7.1) and 7b (build 0.8.0; `docs/phase7b-results.md`) passed in Live (`docs/phase7a-results.md`): editing notes and rhythms of piano scores.
-- **Waiting on the user:** (1) install 0.9.0 (admin PowerShell, Live closed, `scriptsinstall.ps1`); (2) the reference clips: about 10 clips exported from Live (.mid) with the notation you expect; (3) your own guitar riffs and basslines to confirm the tab (Phase 6 gate).
-- **Next:** the 7c Live check (`docs/phase7c-tests.md`, then `docs/phase7c-results.md`), then 7d (page layout), then editing for guitar, bass and drums.
+- **Done:** Phases 0-6 with their Live tests (6: `docs/phase6-results.md`). Phase 7a (0.7.1), 7b (0.8.0) and 7c (0.9.0, 126 core tests; `docs/phase7c-results.md`) passed in Live; 0.9.1 has two small dialog fixes (`docs/phase7a-results.md`): editing notes and rhythms of piano scores.
+- **Waiting on the user:** (1) the reference clips: about 10 clips exported from Live (.mid) with the notation you expect; (2) your own guitar riffs and basslines to confirm the tab (Phase 6 gate).
+- **Next:** 7d (page layout), then editing for guitar, bass and drums.

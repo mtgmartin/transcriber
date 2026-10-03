@@ -142,7 +142,7 @@
       }
 
       input.id = "dlg-" + f.id;
-      input.value = f.value === undefined ? "" : f.value;
+      input.value = f.value !== undefined ? f.value : f.type === "select" ? f.options[0][0] : "";
       holder.appendChild(label);
       holder.appendChild(input);
     });
