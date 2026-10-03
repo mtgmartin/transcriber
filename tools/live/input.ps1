@@ -42,6 +42,10 @@ public static class Inp {
     Thread.Sleep(120); Mouse(4u); Thread.Sleep(100);
   }
   public static void Scroll(int x, int y, int clicks) { Move(x, y); Mouse(0x0800u, (uint)(clicks * 120)); Thread.Sleep(60); }
+  public static void TypeUni(char c) {
+    var i = new INPUT[2]; i[0].type = 1; i[0].u.ki.wScan = c; i[0].u.ki.dwFlags = 4u; i[1].type = 1; i[1].u.ki.wScan = c; i[1].u.ki.dwFlags = 6u;
+    SendInput(2, i, Marshal.SizeOf(typeof(INPUT))); Thread.Sleep(25);
+  }
   public static void TypeChar(char c) {
     short r = VkKeyScan(c); ushort vk = (ushort)(r & 0xff); bool shift = (r & 0x100) != 0;
     if (shift) Key(0x10, false); Key(vk, false); Key(vk, true); if (shift) Key(0x10, true); Thread.Sleep(25);
@@ -81,6 +85,8 @@ function Run-Action([string]$line) {
     'scroll' { [Inp]::Scroll([int]$n[0], [int]$n[1], [int]$n[2]) }
     'wait'   { Start-Sleep -Milliseconds ([int]$n[0]) }
     'type'   { foreach ($c in $rest.Trim('"').ToCharArray()) { [Inp]::TypeChar($c) } }
+    # utype <file>: types the text of a UTF-8 file as Unicode characters (accents, quotes, dashes)
+    'utype'  { foreach ($c in ([IO.File]::ReadAllText($rest.Trim(), [Text.Encoding]::UTF8)).ToCharArray()) { [Inp]::TypeUni($c) } }
     'key'    {
       $keys = @($rest.Trim() -split '\+' | ForEach-Object { Get-Vk $_ })
       foreach ($k in $keys) { [Inp]::Key($k, $false); Start-Sleep -Milliseconds 20 }

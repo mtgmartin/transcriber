@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.22)
 
-project(TRANSCRIBER VERSION 0.13.0)
+project(TRANSCRIBER VERSION 0.13.1)
 
 # Third-party code is downloaded at configure time (pinned, hash-checked) rather than
 # committed, to keep the repository and local checkout small.

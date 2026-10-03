@@ -61,7 +61,10 @@
       const scale = Math.max(10, Math.round(settings.zoom * 0.55));
       const width = Math.max(200, view.clientWidth - 28 - 17);   // room for the scroll bar
       const pageWidth = Math.floor(width * 100 / scale);
-      return Object.assign(common, { scale: scale, pageWidth: pageWidth, pageHeight: Math.max(900, Math.floor(pageWidth * 1.4)) });
+      // the toolkit is kept between renders, so what the A4 pages set has to be undone here (Verovio's defaults)
+      return Object.assign(common, { scale: scale, pageWidth: pageWidth, pageHeight: Math.max(900, Math.floor(pageWidth * 1.4)),
+                                     pageMarginLeft: 50, pageMarginRight: 50, pageMarginTop: 50, pageMarginBottom: 50,
+                                     mmOutput: false, svgViewBox: false });
     }
 
     const scale = sizes[settings.size];
@@ -73,6 +76,56 @@
   }
 
   function options() { return optionsFor(settings.view === "pages" ? "pages" : "scroll"); }
+
+  // Verovio's "smart" line breaking ignores the page breaks of the score, and "encoded" (which keeps them) neither fills a page
+  // nor breaks a line that is too long. So when the score has page breaks, the lines are first worked out with "smart", the page
+  // breaks counted as line breaks. Then every line start is written as a line break, and a page break is written where the
+  // user wants one and wherever a page is full; "encoded" then gives exactly those lines on exactly those pages. How many
+  // lines fill a page is taken from the first layout (the pages without the title: the fewest on a page that is not the first
+  // or the last), so a page is never filled with more lines than were seen to fit.
+  function withPageBreaks(source, opts) {
+    if (!/<pb\/>/.test(source)) return { mei: source, opts: opts };
+
+    const wanted = new Set();
+    const wantedRe = /<pb\/>\s*<measure\s+xml:id="([^"]+)"/g;
+    let found;
+    while ((found = wantedRe.exec(source))) wanted.add(found[1]);
+
+    const probe = new verovio.toolkit();
+    probe.setOptions(opts);
+    probe.loadData(source.replace(/<pb\/>/g, "<sb/>"));
+
+    const lines = [];       // the first measure of every line, in order
+    const perPage = [];     // how many lines each page holds
+    const lineRe = /<g id="[^"]*" class="system">[\s\S]*?<g id="([^"]+)" class="measure">/g;
+    for (let p = 1, pages = probe.getPageCount(); p <= pages; p++) {
+      const svg = probe.renderToSVG(p);
+      let count = 0;
+      while ((found = lineRe.exec(svg))) { lines.push(found[1]); ++count; }
+      perPage.push(count);
+    }
+    if (probe.destroy) probe.destroy();
+
+    const middle = perPage.slice(1, -1);
+    const capacity = Math.max(perPage[0], middle.length ? Math.min.apply(null, middle) : 0);
+    const pageStarts = new Set();
+    let onPage = 0, pageNumber = 1;
+    lines.forEach(function (id, i) {
+      if (i > 0 && (wanted.has(id) || onPage >= (pageNumber === 1 ? perPage[0] : capacity))) { pageStarts.add(id); ++pageNumber; onPage = 0; }
+      ++onPage;
+    });
+
+    const lineStarts = new Set(lines);
+    let first = true;
+    const written = source.replace(/<(?:sb|pb)\/>\s*/g, "").replace(/<measure\s+xml:id="([^"]+)"/g, function (m, id) {
+      const atStart = first;
+      first = false;
+      if (atStart) return m;
+      return (pageStarts.has(id) ? "<pb/>" : lineStarts.has(id) ? "<sb/>" : "") + m;
+    });
+
+    return { mei: written, opts: Object.assign({}, opts, { breaks: "encoded" }) };
+  }
 
   // The text of the notation is set in the embedded font (DejaVu Serif) on the page and in the PDF: the same letters, with
   // the accents of every language the user types.
@@ -99,8 +152,9 @@
 
     if (observer) observer.disconnect();
     const opts = options();
-    toolkit.setOptions(opts);
-    toolkit.loadData(mei);
+    const prepared = withPageBreaks(mei, opts);
+    toolkit.setOptions(prepared.opts);
+    toolkit.loadData(prepared.mei);
     const pages = toolkit.getPageCount();
     const loaded = performance.now();
     const measures = (mei.match(/<measure /g) || []).length;
@@ -169,7 +223,8 @@
 
   // for the PDF export: what is shown, and how the PDF is engraved (the same page as the Pages view)
   function exportData() {
-    return { mei: mei, key: meiKey, options: optionsFor("pdf"), engraved: engraved };
+    const prepared = withPageBreaks(mei, optionsFor("pdf"));
+    return { mei: prepared.mei, key: meiKey, options: prepared.opts, engraved: engraved };
   }
 
   function scheduleRender(delay) {
