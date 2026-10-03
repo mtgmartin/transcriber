@@ -40,3 +40,19 @@ $t = @()
 for ($i = 0; $i -lt 8; $i++) { $t += , @($sc[$i], [double]$i, 1.0, 95) }
 Save "t83-scale.mid" $t 8.0
 Get-ChildItem $out -Filter "t83*.mid" | Select-Object Name, Length
+
+# t84-low-guitar (Phase 8f): 3 bars of 4/4 for a guitar with notes below the low E: bar 1 D2 A2 D3 G3 (Drop D), bar 2 B1 E2 A2 (needs seven strings), bar 3 a chord D2+A2+D3 and E3.
+$lg = @(
+  @(38, 0.0, 1.0, 95), @(45, 1.0, 1.0, 95), @(50, 2.0, 1.0, 95), @(55, 3.0, 1.0, 95),
+  @(35, 4.0, 1.0, 95), @(40, 5.0, 1.0, 95), @(45, 6.0, 2.0, 95),
+  @(38, 8.0, 2.0, 100), @(45, 8.0, 2.0, 100), @(50, 8.0, 2.0, 100), @(52, 10.0, 2.0, 95)
+)
+Save "t84-low-guitar.mid" $lg 12.0
+
+# t85-low-bass (Phase 8f): 2 bars of 4/4 for a bass: bar 1 D1 A1 D2 G2 (Drop D), bar 2 B0 E1 A1 D2 (needs five strings).
+$lb = @(
+  @(26, 0.0, 1.0, 95), @(33, 1.0, 1.0, 95), @(38, 2.0, 1.0, 95), @(43, 3.0, 1.0, 95),
+  @(23, 4.0, 1.0, 95), @(28, 5.0, 1.0, 95), @(33, 6.0, 1.0, 95), @(38, 7.0, 1.0, 95)
+)
+Save "t85-low-bass.mid" $lb 8.0
+Get-ChildItem $out -Include "t84*.mid","t85*.mid" -Recurse | Select-Object Name, Length

@@ -195,6 +195,11 @@ namespace
 
                 spannersStartingIn (i);
 
+                if (i == 0)
+                    for (const auto* staff : staves)
+                        if (staff->prop ("kind").asString() == "tab")
+                            tuningNote (*staff);
+
                 for (const auto& [id, text] : directions)
                     out += "    <dir startid=\"#" + xmlEscape (id) + "\" place=\"above\" staff=\"1\">" + xmlEscape (text) + "</dir>\n";
 
@@ -285,6 +290,21 @@ namespace
             }
         }
 
+        // "Tuning: D A D G B E" under the tab at the start, when it is not the standard tuning of the instrument
+        void tuningNote (const Node& tab)
+        {
+            const auto strings = (int) tab.prop ("strings").asInt (6);
+            const auto open = tuningFromText (tab.prop ("tuning").asString());
+            const auto* part = score.findParent (tab.id);
+            const auto type = part != nullptr && part->prop ("name").asString() == "Bass" ? InstrumentType::bass : InstrumentType::guitar;
+
+            if (open.empty() || (int) open.size() != strings || open == openStrings (type))
+                return;
+
+            out += "    <dir tstamp=\"1\" place=\"below\" staff=\"" + std::to_string (tab.prop ("n").asInt()) + "\">Tuning: "
+                   + xmlEscape (tuningLetters (open)) + "</dir>\n";
+        }
+
         // The clef of a staff, and for a tablature staff its lines and tuning.
         void staffDefinition (const Node& staff)
         {
@@ -294,7 +314,8 @@ namespace
             if (clef == "TAB")
             {
                 const auto strings = (int) staff.prop ("strings").asInt (6);
-                const auto open = openStrings (strings == 4 ? InstrumentType::bass : InstrumentType::guitar);
+                const auto saved = tuningFromText (staff.prop ("tuning").asString());
+                const auto open = ! saved.empty() && (int) saved.size() == strings ? saved : openStrings (strings == 4 ? InstrumentType::bass : InstrumentType::guitar);
                 out += "    <staffDef n=\"" + n + "\" lines=\"" + std::to_string (strings) + "\" notationtype=\"tab.guitar\" clef.shape=\"TAB\">\n"
                        "     <tuning>";
 

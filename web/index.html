@@ -214,6 +214,11 @@
         <option value="4">1/4</option><option value="8">1/8</option><option value="16">1/16</option><option value="32">1/32</option><option value="64">1/64</option><option value="128">1/128</option>
       </select>
       <label><input type="checkbox" id="set-triplets"> Triplets</label>
+      <span id="grp-tuning" hidden>
+        <label for="set-tuning" title="The strings of the guitar or bass: Automatic uses the standard tuning, and another one only when the notes need it">Tuning</label>
+        <select id="set-tuning" title="Automatic, a tuning from the list, or your own"></select>
+        <input id="set-tuning-text" type="text" size="26" maxlength="80" placeholder="D2 A2 D3 G3 B3 E4" title="The notes of the strings from the lowest, as note names (C#2, Db3) or MIDI numbers; Enter to use them" hidden>
+      </span>
       <span id="grp-transpose">
         <label for="set-transpose" title="For a synth that plays other pitches than the notes it receives: this is added to every note before the score is made">Transpose</label>
         <input id="set-transpose" type="number" min="-48" max="48" step="1" value="0" title="Semitones, -48 to 48; the next recording gets it too">
@@ -254,6 +259,7 @@
       </div>
       <p id="drum-msg" class="result"></p>
     </div>
+    <p id="tuning-msg" class="result bad" hidden></p>
     <p id="score-info" class="result">No score yet.</p>
     <details id="score-details"><summary>Score as text</summary><pre id="score-text" class="result"></pre></details>
     <div class="row">

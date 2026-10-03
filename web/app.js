@@ -272,6 +272,70 @@ $("set-key").addEventListener("change", function (e) {
   setSetting("key", parseInt(e.target.value, 10) * 2 + (e.target.value.endsWith("m") ? 1 : 0));
 });
 
+// The tuning of a guitar or bass: Automatic, one of the tunings of the list, or the user's own notes.
+let tuningListKey = "";
+
+function tuningNames(notesText) {
+  return notesText.trim().split(/\s+/).map(function (n) { return noteName(parseInt(n, 10)); }).join(" ");
+}
+
+function showTuning(s, has, instrument) {
+  const fretted = instrument === "guitar" || instrument === "bass";
+  $("grp-tuning").hidden = !fretted;
+  $("tuning-msg").hidden = !fretted || !s.tuningMessage;
+  $("tuning-msg").textContent = s.tuningMessage || "";
+  if (!fretted) return;
+
+  const select = $("set-tuning");
+  const presets = s.tunings || [];
+  const key = JSON.stringify(presets.map(function (p) { return p.id; })) + instrument;
+
+  if (key !== tuningListKey) {
+    tuningListKey = key;
+    select.textContent = "";
+    [["auto", "Automatic"]].concat(presets.map(function (p) { return ["preset:" + p.id, p.name + " (" + tuningNames(p.notes) + ")"]; }), [["custom", "My own..."]]).forEach(function (o) {
+      const opt = document.createElement("option");
+      opt.value = o[0];
+      opt.textContent = o[1];
+      select.appendChild(opt);
+    });
+  }
+
+  select.disabled = !has || s.state === "recording" || s.state === "armed";
+  $("set-tuning-text").disabled = select.disabled;
+  if (!has || document.activeElement === select || document.activeElement === $("set-tuning-text")) return;
+
+  // what the score is written in: the settings say "auto" or the strings; an edited score says it itself
+  const edited = !!(s.transcription && s.transcription.edited);
+  const notes = s.transcription && s.transcription.tuningNotes ? s.transcription.tuningNotes : "";
+  let value = "auto";
+
+  if (edited || (s.settings && s.settings.tuning !== "auto")) {
+    const text = edited ? notes : s.settings.tuning;
+    const match = presets.filter(function (p) { return p.notes === text; })[0];
+    value = match ? "preset:" + match.id : "custom";
+  }
+
+  select.value = value;
+  $("set-tuning-text").hidden = value !== "custom";
+  if (value === "custom" && notes) $("set-tuning-text").value = tuningNames(edited ? notes : s.settings.tuning);
+}
+
+$("set-tuning").addEventListener("change", function (e) {
+  if (e.target.value === "custom") {
+    $("set-tuning-text").hidden = false;
+    $("set-tuning-text").focus();
+    return;
+  }
+
+  $("set-tuning-text").hidden = true;
+  send("setTuning", { tuning: e.target.value });
+  e.target.blur();
+});
+
+$("set-tuning-text").addEventListener("change", function (e) { send("setTuning", { tuning: e.target.value }); });
+$("set-tuning-text").addEventListener("keydown", function (e) { if (e.key === "Enter") { e.target.blur(); } e.stopPropagation(); });
+
 function showTranscription(s) {
   const has = !!s.settings;
   const instrument = s.instrument || "piano";
@@ -288,6 +352,8 @@ function showTranscription(s) {
   $("grp-transpose").hidden = instrument === "drums";
   $("set-transpose").disabled = s.state === "recording" || s.state === "armed" || locked;
   if (document.activeElement !== $("set-transpose")) $("set-transpose").value = String(has ? s.settings.transpose : (s.defaultTranspose || 0));
+
+  showTuning(s, has, instrument);
 
   if (!has) {
     $("score-info").textContent = s.state === "recording" ? "The score is made when the recording stops." : "No score yet. New recordings are written for: " + instrument + ".";
@@ -314,7 +380,7 @@ function showTranscription(s) {
                (t.edited ? "" : cfg.keyTonic < 0 ? ", detected" : ", set by you") + " · " + measures +
                " · up to " + t.voices + " voice" + (t.voices === 1 ? "" : "s") + " in a hand" + edited);
   } else {
-    lines.push((instrument === "bass" ? "Bass" : "Guitar") + " with tab · key: " + keyName(t.keyFifths, t.keyMinor) +
+    lines.push((instrument === "bass" ? "Bass" : "Guitar") + " with tab · " + (t.tuningName ? "tuning: " + t.tuningName + " · " : "") + "key: " + keyName(t.keyFifths, t.keyMinor) +
                (t.edited ? "" : cfg.keyTonic < 0 ? ", detected" : ", set by you") + " · " + measures + edited);
   }
   // the notes missing from a drum map are shown with the map

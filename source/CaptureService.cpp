@@ -223,6 +223,91 @@ trs::Profile CaptureService::profileFor (trs::InstrumentType type) const
     return p;
 }
 
+void CaptureService::setTuning (const juce::String& request)
+{
+    const std::lock_guard<std::mutex> lock (mutex);
+    tuningMessage.clear();
+    auto* v = document.activeMutable();
+
+    if (v == nullptr)
+    {
+        tuningMessage = "Record something first: the tuning belongs to a take.";
+        return;
+    }
+
+    const auto type = v->instrument().type;
+
+    if (type != trs::InstrumentType::guitar && type != trs::InstrumentType::bass)
+    {
+        tuningMessage = "Only a guitar or a bass has strings.";
+        return;
+    }
+
+    const auto text = request.trim().toStdString();
+    const bool automatic = text == "auto";
+    std::vector<int> notes;
+
+    if (! automatic)
+    {
+        if (text.rfind ("preset:", 0) == 0)
+        {
+            for (const auto& p : trs::tuningPresets (type))
+                if (p.id == text.substr (7))
+                    notes = p.notes;
+
+            if (notes.empty())
+            {
+                tuningMessage = "That tuning is not known.";
+                return;
+            }
+        }
+        else
+        {
+            std::string error;
+
+            if (! trs::tuningFromNames (text, notes, error))
+            {
+                tuningMessage = juce::String::fromUTF8 (error.c_str());
+                return;
+            }
+        }
+
+        std::string why;
+
+        if (! trs::validTuning (type, notes, &why))
+        {
+            tuningMessage = juce::String::fromUTF8 (why.c_str());
+            return;
+        }
+    }
+
+    if (v->scoreEdited)
+    {
+        // an edited score is not written again: the notes are placed on the new strings as an edit
+        if (automatic)
+        {
+            tuningMessage = "Automatic needs the whole take: discard your edits first, or choose a tuning.";
+            return;
+        }
+
+        trs::Json json = trs::Json::object();
+        json.set ("op", "tuning");
+        json.set ("tuning", trs::tuningText (notes));
+        const auto result = trs::performEdit (v->score, historyOf (*v), json);
+
+        if (! result.ok && result.message != "The score is in that tuning already.")
+            tuningMessage = juce::String::fromUTF8 (result.message.c_str());
+
+        return;
+    }
+
+    auto s = v->transcriptionSettings();
+    s.tuning = automatic ? "auto" : trs::tuningText (notes);
+
+    if (! (s == v->transcriptionSettings()))
+        v->setTranscriptionSettings (s);
+}
+
 void CaptureService::setInstrument (const juce::String& type)
 {
     const std::lock_guard<std::mutex> lock (mutex);
@@ -520,6 +605,7 @@ juce::var CaptureService::getStatus() const
         st->setProperty ("grid", settings.grid);
         st->setProperty ("triplets", settings.triplets);
         st->setProperty ("transpose", settings.transpose);
+        st->setProperty ("tuning", juce::String::fromUTF8 (settings.tuning.c_str()));
         st->setProperty ("splitPoint", settings.splitPoint);
         st->setProperty ("autoPickup", settings.autoPickup);
         st->setProperty ("keyTonic", settings.keyTonic);
@@ -541,6 +627,21 @@ juce::var CaptureService::getStatus() const
         t->setProperty ("offGrid", v->report.offGridNotes);
         t->setProperty ("tripletBeats", v->report.tripletBeats);
         t->setProperty ("edited", v->scoreEdited);
+
+        // the strings the tab is written for (it says so itself: an edit can change them), by name and as numbers
+        for (const auto& part : v->score.root().children)
+        {
+            for (const auto& staff : part.children)
+            {
+                if (staff.prop ("kind").asString() != "tab")
+                    continue;
+
+                const auto notes = trs::tuningFromText (staff.prop ("tuning").asString());
+                const auto type = part.prop ("name").asString() == "Bass" ? trs::InstrumentType::bass : trs::InstrumentType::guitar;
+                t->setProperty ("tuningName", juce::String::fromUTF8 (trs::tuningName (type, notes.empty() ? trs::openStrings (type) : notes).c_str()));
+                t->setProperty ("tuningNotes", juce::String::fromUTF8 (trs::tuningText (notes.empty() ? trs::openStrings (type) : notes).c_str()));
+            }
+        }
 
         {
             auto* ed = new juce::DynamicObject();
@@ -581,6 +682,24 @@ juce::var CaptureService::getStatus() const
     }
 
     o->setProperty ("defaultTranspose", document.defaultTranspose);
+
+    // the tunings to choose from, for the instrument of the shown take
+    {
+        juce::Array<juce::var> tunings;
+        const auto type = v != nullptr ? v->instrument().type : trs::Profile::fromJson (document.defaultProfile).type;
+
+        for (const auto& p : trs::tuningPresets (type))
+        {
+            auto* e = new juce::DynamicObject();
+            e->setProperty ("id", juce::String::fromUTF8 (p.id.c_str()));
+            e->setProperty ("name", juce::String::fromUTF8 (p.name.c_str()));
+            e->setProperty ("notes", juce::String::fromUTF8 (trs::tuningText (p.notes).c_str()));
+            tunings.add (juce::var (e));
+        }
+
+        o->setProperty ("tunings", tunings);
+        o->setProperty ("tuningMessage", tuningMessage);
+    }
 
     // the instrument of the shown take, or the default for the next one; the drum maps
     if (live || v == nullptr)

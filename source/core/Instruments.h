@@ -66,4 +66,27 @@ struct Profile
 // Standard tunings: MIDI notes of the open strings, lowest string first.
 std::vector<int> openStrings (InstrumentType);       // guitar E2 A2 D3 G3 B3 E4; bass E1 A1 D2 G2; empty for others
 
+// Tunings of a guitar or bass (Phase 8f): the open strings as MIDI notes, lowest string first, strictly rising.
+struct TuningPreset
+{
+    std::string id;      // "std", "dropd", ...
+    std::string name;    // "Drop D"
+    std::vector<int> notes;
+};
+
+std::vector<TuningPreset> tuningPresets (InstrumentType);   // the first is the standard tuning; empty for other instruments
+std::string noteNameOf (int midi);                          // "E2", "C#3" (middle C is C4)
+std::string tuningText (const std::vector<int>&);           // "40 45 50 55 59 64": how a tuning is saved
+std::vector<int> tuningFromText (const std::string&);       // the numbers; empty if that is not a list of numbers 0-127
+// A tuning typed by the user: note names ("D2 A2 D3", "C#2 Db3") and/or MIDI numbers, separated by spaces or commas.
+bool tuningFromNames (const std::string& text, std::vector<int>& out, std::string& error);
+// Whether the notes can be the strings of this instrument: 4-8 strings for a guitar, 4-6 for a bass, rising, within MIDI 0-127.
+bool validTuning (InstrumentType, const std::vector<int>&, std::string* why = nullptr);
+// "Standard", "Drop D", ... or the letters of the strings ("D A D G B E").
+std::string tuningName (InstrumentType, const std::vector<int>&);
+std::string tuningLetters (const std::vector<int>&);        // always the letters of the strings: "D A D G B E"
+// The tuning a take is written in when the user left it to the program: the standard one if it can play every note, otherwise the
+// smallest change (a lower string, everything tuned down, an extra low string) that can; the best one if none can.
+std::vector<int> chooseTuning (InstrumentType, const std::vector<int>& pitches, int maxFret);
+
 }  // namespace trs

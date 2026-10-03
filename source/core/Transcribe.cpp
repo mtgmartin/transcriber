@@ -1,4 +1,5 @@
 #include "Notation.h"
+#include "Instruments.h"
 #include "TranscribeInternal.h"
 
 #include <algorithm>
@@ -18,6 +19,7 @@ Json TranscriptionSettings::toJson() const
     j.set ("grid", grid);
     j.set ("triplets", triplets);
     j.set ("transpose", transpose);
+    j.set ("tuning", tuning);
     j.set ("splitPoint", splitPoint);
     j.set ("autoPickup", autoPickup);
     j.set ("keyTonic", keyTonic);
@@ -32,6 +34,10 @@ TranscriptionSettings TranscriptionSettings::fromJson (const Json& j)
     s.grid = grid == 4 || grid == 8 || grid == 16 || grid == 32 || grid == 64 || grid == 128 ? grid : s.grid;
     s.triplets = j.get ("triplets").asBool (s.triplets);
     s.transpose = std::max (-48, std::min (48, (int) j.get ("transpose").asInt (0)));
+
+    // a tuning that cannot be the strings of a guitar is let go (whether it suits a bass is looked at when a take is written)
+    const auto tuning = j.get ("tuning").asString ("auto");
+    s.tuning = tuning == "auto" || validTuning (InstrumentType::guitar, tuningFromText (tuning)) ? tuning : "auto";
     s.splitPoint = std::max (21, std::min (108, (int) j.get ("splitPoint").asInt (s.splitPoint)));
     s.autoPickup = j.get ("autoPickup").asBool (s.autoPickup);
     const auto tonic = (int) j.get ("keyTonic").asInt (-1);
@@ -42,7 +48,7 @@ TranscriptionSettings TranscriptionSettings::fromJson (const Json& j)
 
 bool TranscriptionSettings::operator== (const TranscriptionSettings& o) const
 {
-    return grid == o.grid && triplets == o.triplets && transpose == o.transpose && splitPoint == o.splitPoint && autoPickup == o.autoPickup
+    return grid == o.grid && triplets == o.triplets && transpose == o.transpose && tuning == o.tuning && splitPoint == o.splitPoint && autoPickup == o.autoPickup
         && keyTonic == o.keyTonic && keyMinor == o.keyMinor;
 }
 

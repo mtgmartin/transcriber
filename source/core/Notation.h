@@ -23,6 +23,7 @@ struct TranscriptionSettings
     int grid = 16;              // finest division kept: 4, 8, 16, 32, 64 or 128 (quarter ... 128th notes)
     bool triplets = true;       // a beat may use the triplet grid when it fits better
     int transpose = 0;          // semitones added to every pitch before the score is made (a synth that transposes); not for drums
+    std::string tuning = "auto";   // guitar and bass: "auto", or the open strings as numbers ("38 45 50 55 59 64"), lowest first
     int splitPoint = 60;        // piano: notes from here up go to the right hand
     bool autoPickup = true;     // a first bar that starts late becomes a pickup bar
     int keyTonic = -1;          // -1 = detect the key; otherwise the tonic as a pitch class 0-11 ...
@@ -79,6 +80,7 @@ struct TranscriptionReport
     int tripletBeats = 0;
     int mergedNotes = 0;        // duplicates and zero-length notes that were dropped
     int shortNotes = 0;         // notes shorter than a 32nd after quantising
+    std::string tuning;         // guitar and bass: the name of the tuning the score is written in
     int grid = 16;              // the grid the notes were quantised to
     int measures = 0;
     int maxVoices = 0;

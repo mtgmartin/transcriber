@@ -313,12 +313,38 @@ const ResolvedCapture& capture, const TranscriptionSettings& settings, Instrumen
 {
     TranscriptionResult result;
     auto& report = result.report;
-    const auto open = openStrings (type);
 
     auto prepared = prepareNotes (capture, settings, result);
     auto& quantized = prepared.quantized;
     auto& bars = prepared.bars;
     const auto& notes = quantized.notes;
+
+    // The tuning: the one the user chose (if it can be the strings of this instrument), or the standard one unless the take
+    // has notes that cannot be played in it, and then the smallest change that can.
+    std::vector<int> open = openStrings (type);
+
+    {
+        std::vector<int> pitches;
+
+        for (const auto& q : notes)
+            pitches.push_back (q.pitch);
+
+        const auto chosen = tuningFromText (settings.tuning);
+
+        if (settings.tuning != "auto" && validTuning (type, chosen))
+        {
+            open = chosen;
+        }
+        else
+        {
+            open = chooseTuning (type, pitches, maxFret);
+
+            if (open != openStrings (type))
+                report.warnings.push_back ("Tuned to " + tuningName (type, open) + " so that all notes can be played.");
+        }
+
+        report.tuning = tuningName (type, open);
+    }
 
     const auto spelled = analyseKey (notes, settings, result);
 
@@ -471,6 +497,7 @@ const ResolvedCapture& capture, const TranscriptionSettings& settings, Instrumen
         staffNode.props["clef"] = Json ("TAB");
         staffNode.props["kind"] = Json ("tab");
         staffNode.props["strings"] = Json (strings);
+        staffNode.props["tuning"] = Json (tuningText (open));
 
         int number = firstNumber;
 

@@ -24,6 +24,187 @@ using tsupport::p;
 namespace
 {
     //==========================================================================
+    // Phase 8f: tunings
+
+    void testTuningLibrary()
+    {
+        // every preset is a tuning its instrument can have, the first one is the standard tuning, and each has a name
+        for (const auto type : { InstrumentType::guitar, InstrumentType::bass })
+        {
+            const auto presets = tuningPresets (type);
+            CHECK (presets.size() >= 5);
+            CHECK (presets.front().notes == openStrings (type));
+            CHECK_STR (presets.front().name.c_str(), "Standard");
+
+            for (const auto& preset : presets)
+            {
+                std::string why;
+                CHECK (validTuning (type, preset.notes, &why));
+                CHECK_STR (tuningName (type, preset.notes).c_str(), preset.name.c_str());
+                CHECK (tuningFromText (tuningText (preset.notes)) == preset.notes);
+            }
+        }
+
+        CHECK (tuningPresets (InstrumentType::piano).empty());
+        CHECK_STR (noteNameOf (40).c_str(), "E2");
+        CHECK_STR (noteNameOf (61).c_str(), "C#4");
+        CHECK_STR (noteNameOf (23).c_str(), "B0");
+        CHECK_STR (tuningName (InstrumentType::guitar, { 38, 43, 48, 53, 57, 61 }).c_str(), "D G C F A C#");   // no name: the letters
+
+        // typed by the user: names, flats and sharps, numbers, mixed, with commas
+        std::vector<int> notes;
+        std::string error;
+        CHECK (tuningFromNames ("D2 A2 D3 G3 B3 E4", notes, error));
+        CHECK (notes == std::vector<int> ({ 38, 45, 50, 55, 59, 64 }));
+        CHECK (tuningFromNames ("c#2, Db3  F#3 38 57 69", notes, error));
+        CHECK (notes == std::vector<int> ({ 37, 49, 54, 38, 57, 69 }));
+        CHECK (tuningFromNames ("Bb1 E2", notes, error));
+        CHECK (notes == std::vector<int> ({ 34, 40 }));
+
+        // what is wrong is said
+        CHECK (! tuningFromNames ("", notes, error));
+        CHECK (error.find ("Type the notes") != std::string::npos);
+        CHECK (! tuningFromNames ("D2 H2", notes, error));
+        CHECK (error.find ("\"H2\"") != std::string::npos);
+        CHECK (! tuningFromNames ("D2 A", notes, error));
+        CHECK (error.find ("no octave") != std::string::npos);
+        CHECK (! tuningFromNames ("D2 200", notes, error));
+        CHECK (error.find ("0 to 127") != std::string::npos);
+
+        // the strings of an instrument
+        std::string why;
+        CHECK (validTuning (InstrumentType::guitar, { 35, 40, 45, 50, 55, 59, 64 }, &why));
+        CHECK (! validTuning (InstrumentType::guitar, { 40, 45, 50 }, &why));
+        CHECK (why.find ("4 to 8") != std::string::npos);
+        CHECK (! validTuning (InstrumentType::bass, { 23, 28, 33, 38, 43, 48, 53 }, &why));
+        CHECK (! validTuning (InstrumentType::guitar, { 40, 45, 45, 55, 59, 64 }, &why));
+        CHECK (why.find ("go up") != std::string::npos);
+        CHECK (! validTuning (InstrumentType::guitar, { 40, 45, 50, 55, 59, 130 }, &why));
+        CHECK (! validTuning (InstrumentType::piano, { 40, 45, 50, 55 }, &why));
+        CHECK (tuningFromText ("40 45 x").empty());
+        CHECK (tuningFromText ("40 999").empty());
+    }
+
+    void testChooseTuning()
+    {
+        const auto standard = openStrings (InstrumentType::guitar);
+        const auto choose = [&] (std::vector<int> pitches, InstrumentType type = InstrumentType::guitar) { return chooseTuning (type, pitches, 22); };
+
+        // what the standard tuning can play: it stays
+        CHECK (choose ({ 40, 52, 64, 86 }) == standard);
+        CHECK (choose ({}) == standard);
+
+        // below the low E: a drop tuning, then an extra string, then everything tuned down
+        CHECK (choose ({ 40, 38 }) == tuningPresets (InstrumentType::guitar)[1].notes);        // Drop D
+        CHECK (choose ({ 40, 38, 52 }) == tuningPresets (InstrumentType::guitar)[1].notes);
+        CHECK (choose ({ 37 }) == std::vector<int> ({ 35, 40, 45, 50, 55, 59, 64 }));         // a 7-string guitar
+        CHECK (choose ({ 30 }) == std::vector<int> ({ 30, 35, 40, 45, 50, 55, 59, 64 }));     // an 8-string guitar
+        CHECK (choose ({ 20 }) == standard);                                                   // nothing can play it: the standard tuning stays
+
+        // above the highest string: nothing helps, the standard tuning stays
+        CHECK (choose ({ 40, 100 }) == standard);
+
+        // bass
+        const auto bass = openStrings (InstrumentType::bass);
+        CHECK (choose ({ 28, 33 }, InstrumentType::bass) == bass);
+        CHECK (choose ({ 26 }, InstrumentType::bass) == tuningPresets (InstrumentType::bass)[1].notes);   // Drop D
+        CHECK (choose ({ 24 }, InstrumentType::bass) == std::vector<int> ({ 23, 28, 33, 38, 43 }));       // a 5-string bass
+        CHECK (choose ({ 60 }, InstrumentType::bass) == std::vector<int> ({ 23, 28, 33, 38, 43, 48 }) || choose ({ 60 }, InstrumentType::bass).size() >= 4);
+
+        // every tuning that comes back is a tuning of the instrument
+        std::mt19937 rng (5);
+
+        for (int i = 0; i < 200; ++i)
+        {
+            std::vector<int> pitches;
+
+            for (int k = 0; k < 6; ++k)
+                pitches.push_back (20 + (int) (rng() % 70));
+
+            for (const auto type : { InstrumentType::guitar, InstrumentType::bass })
+                CHECK (validTuning (type, chooseTuning (type, pitches, 22)));
+        }
+    }
+
+    void testTuningsInTheScore()
+    {
+        // a take with a note below the low E: the program tunes the guitar to Drop D, says so, and every note is on the tab
+        const auto low = tsupport::capture ({ { 38, 0, 1 }, { 45, 1, 1 }, { 50, 2, 1 }, { 55, 3, 1 }, { 52, 4, 2 }, { 59, 4, 2 } }, 8.0);
+        const auto drop = transcribeFretted (low, {}, InstrumentType::guitar);
+        bool said = false;
+
+        for (const auto& w : drop.report.warnings)
+        {
+            said = said || w.find ("Tuned to Drop D so that all notes can be played") != std::string::npos;
+            CHECK (w.find ("cannot be played") == std::string::npos);
+        }
+
+        CHECK (said);
+        CHECK_STR (drop.report.tuning.c_str(), "Drop D");
+        CHECK_EQ (drop.report.notes, 6);
+
+        const Node* tab = nullptr;
+
+        for (const auto& part : drop.score.root().children)
+            for (const auto& staff : part.children)
+                if (staff.prop ("kind").asString() == "tab")
+                    tab = &staff;
+
+        CHECK (tab != nullptr);
+
+        if (tab != nullptr)
+        {
+            CHECK_STR (tab->prop ("tuning").asString().c_str(), "38 45 50 55 59 64");
+            CHECK_EQ (tab->prop ("strings").asInt(), (int64_t) 6);
+        }
+
+        // the first note is on the open low string
+        CHECK (dumpScore (drop.score).find ("S2 v1: 6:0/4 5:0/4 4:0/4 3:0/4") != std::string::npos);
+
+        // the MEI has the tuning of the strings and the words under the tab
+        const auto mei = scoreToMei (drop.score, {});
+        CHECK (mei.find ("<course n=\"6\" pname=\"d\" oct=\"2\"/>") != std::string::npos);
+        CHECK (mei.find (">Tuning: D A D G B E</dir>") != std::string::npos);
+        CHECK (xmlcheck::checkXml (mei).wellFormed);
+
+        // the standard tuning has no words and no change
+        const auto plain = transcribeFretted (tsupport::capture ({ { 40, 0, 1 }, { 45, 1, 1 } }, 4.0), {}, InstrumentType::guitar);
+        CHECK_STR (plain.report.tuning.c_str(), "Standard");
+        CHECK (scoreToMei (plain.score, {}).find ("Tuning:") == std::string::npos);
+        CHECK (plain.report.warnings.empty());
+
+        // a tuning chosen by the user is used, even when the take would fit the standard one
+        TranscriptionSettings seven;
+        seven.tuning = "35 40 45 50 55 59 64";
+        const auto big = transcribeFretted (tsupport::capture ({ { 40, 0, 1 }, { 35, 1, 1 } }, 4.0), seven, InstrumentType::guitar);
+        CHECK_STR (big.report.tuning.c_str(), "7 strings (B standard)");
+        CHECK (scoreToMei (big.score, {}).find ("lines=\"7\"") != std::string::npos);
+        CHECK (dumpScore (big.score).find ("S2 v1: 6:0/4 7:0/4") != std::string::npos);
+
+        // one that cannot be the strings of this instrument (seven strings for a bass, or not rising) is let go: the program chooses
+        TranscriptionSettings six;
+        six.tuning = "35 40 45 50 55 59 64";
+        CHECK_STR (transcribeFretted (tsupport::capture ({ { 28, 0, 1 } }, 4.0), six, InstrumentType::bass).report.tuning.c_str(), "Standard");
+        TranscriptionSettings wild;
+        wild.tuning = "50 45 40 55";
+        CHECK_STR (TranscriptionSettings::fromJson (wild.toJson()).tuning.c_str(), "auto");
+
+        // bass in a tuning of its own
+        TranscriptionSettings five;
+        five.tuning = "23 28 33 38 43";
+        const auto lowB = transcribeFretted (tsupport::capture ({ { 24, 0, 1 }, { 28, 1, 1 } }, 4.0), five, InstrumentType::bass);
+        CHECK_STR (lowB.report.tuning.c_str(), "5 strings (B E A D G)");
+        CHECK (scoreToMei (lowB.score, {}).find ("lines=\"5\"") != std::string::npos);
+
+        // the settings as JSON
+        TranscriptionSettings custom;
+        custom.tuning = "38 45 50 55 59 64";
+        CHECK (TranscriptionSettings::fromJson (custom.toJson()) == custom);
+        CHECK_STR (TranscriptionSettings::fromJson (Json()).tuning.c_str(), "auto");
+        CHECK (! (TranscriptionSettings() == custom));
+    }
+
+    //==========================================================================
     // The drum map
 
     void testDrumMap()
@@ -1034,4 +1215,7 @@ namespace
     REGISTER (testDrumMei, "mei: drums");
     REGISTER (testTabMei, "mei: guitar and bass with tab");
     REGISTER (testFixturesGiveValidMei, "mei: all pipelines on the test clips");
+    REGISTER (testTuningLibrary, "tunings: presets, names, typed tunings");
+    REGISTER (testChooseTuning, "tunings: Automatic picks the smallest change that plays every note");
+    REGISTER (testTuningsInTheScore, "tunings: in the score, the tab and the MEI");
 }

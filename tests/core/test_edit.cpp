@@ -608,9 +608,10 @@ REGISTER (testBlocked, "edit: every instrument can be edited, an empty score can
 
 namespace
 {
-    Score fretted (std::vector<N> notes, double length, InstrumentType type = InstrumentType::guitar, int beatsPerBar = 4)
+    Score fretted (std::vector<N> notes, double length, InstrumentType type = InstrumentType::guitar, int beatsPerBar = 4, const std::string& tuning = "auto")
     {
         TranscriptionSettings settings;
+        settings.tuning = tuning;
         return transcribeFretted (takeOf (notes, length, beatsPerBar), settings, type).score;
     }
 
@@ -676,7 +677,10 @@ namespace
             return {};
 
         const int strings = (int) tab->prop ("strings").asInt (6);
-        const auto open = openStrings (strings == 4 ? InstrumentType::bass : InstrumentType::guitar);
+        auto open = tuningFromText (tab->prop ("tuning").asString());
+
+        if ((int) open.size() != strings)
+            open = openStrings (strings == 4 ? InstrumentType::bass : InstrumentType::guitar);
 
         if (tab->children.size() != notation->children.size())
             return "the tab has another number of measures";
@@ -933,7 +937,7 @@ REGISTER (testFrettedMarksKeyAndMei, "edit: guitar marks, key and MEI");
 static void testRandomFrettedEdits()
 {
     std::mt19937 rng (11);
-    int applied = 0, refused = 0, strings = 0;
+    int applied = 0, refused = 0, strings = 0, retunes = 0;
 
     for (int take = 0; take < 30; ++take)
     {
@@ -948,7 +952,10 @@ static void testRandomFrettedEdits()
             notes.push_back ({ bass ? 28 + (int) (rng() % 30) : 40 + (int) (rng() % 40), start, dur });
         }
 
-        Session s (fretted (notes, 12.0, bass ? InstrumentType::bass : InstrumentType::guitar));
+        const auto type = bass ? InstrumentType::bass : InstrumentType::guitar;
+        const auto presets = tuningPresets (type);
+        const auto tuning = take % 2 == 0 ? std::string ("auto") : tuningText (presets[rng() % presets.size()].notes);
+        Session s (fretted (notes, 12.0, type, 4, tuning));
         CHECK_STR (problems (s.score).c_str(), "");
         CHECK_STR (tabProblems (s.score).c_str(), "");
         const Score start = s.score;
@@ -964,7 +971,7 @@ static void testRandomFrettedEdits()
                 id = target->children[rng() % target->children.size()].id;
 
             Json j = Json::object();
-            const auto kind = rng() % 19;
+            const auto kind = rng() % 20;
 
             switch (kind)
             {
@@ -983,6 +990,7 @@ static void testRandomFrettedEdits()
                 case 13: j = req ("slur", id, "count", 1 + (int) (rng() % 3)); break;
                 case 14: j = req ("break", id); j.set ("mode", std::string (rng() % 2 == 0 ? "system" : "none")); break;
                 case 18: j = req ("grace", id); j.set ("mode", std::string (rng() % 3 == 0 ? "none" : rng() % 2 == 0 ? "acc" : "app")); break;
+                case 19: j = Json::object(); j.set ("op", "tuning"); j.set ("tuning", tuningText (presets[rng() % presets.size()].notes)); ++retunes; break;
                 default: j = stringReq (id, rng() % 2 == 0 ? "up" : "down"); ++strings; break;
             }
 
@@ -1027,6 +1035,7 @@ static void testRandomFrettedEdits()
     CHECK (applied > 200);
     CHECK (refused > 20);
     CHECK (strings > 20);
+    CHECK (retunes > 10);
 }
 REGISTER (testRandomFrettedEdits, "edit: random guitar and bass edits keep the tab right and undo exactly");
 
@@ -2837,3 +2846,112 @@ static void testGraceNotesFrettedAndDrums()
     CHECK (e.run (graceReq (idOf (e.score, 0), "none")).ok == false);   // the first hit is not a grace note
 }
 REGISTER (testGraceNotesFrettedAndDrums, "edit: grace notes on guitar and drums");
+
+//==============================================================================
+// Phase 8f: the tuning of an edited guitar or bass score.
+static Json tuneReq (const std::vector<int>& notes)
+{
+    Json j = Json::object();
+    j.set ("op", "tuning");
+    j.set ("tuning", tuningText (notes));
+    return j;
+}
+
+static void testTuningEdits()
+{
+    Session s (fretted ({ { p ("E2"), 0, 1 }, { p ("A2"), 1, 1 }, { p ("D3"), 2, 1 }, { p ("G3"), 3, 1 } }, 4.0));
+    CHECK_STR (tabLine (s.score).c_str(), "6:0 5:0 4:0 3:0");
+    const auto notation = right (s.score);
+
+    // Drop D: the E is fret 2 on the lowest string; the notation does not change; the MEI says what the strings are
+    auto r = s.run (tuneReq ({ 38, 45, 50, 55, 59, 64 }));
+    CHECK (r.ok);
+    CHECK_STR (tabLine (s.score).c_str(), "6:2 5:0 4:0 3:0");
+    CHECK_STR (right (s.score).c_str(), notation.c_str());
+    CHECK_STR (tabProblems (s.score).c_str(), "");
+    CHECK (scoreToMei (s.score, {}).find (">Tuning: D A D G B E</dir>") != std::string::npos);
+    CHECK (xmlcheck::checkXml (scoreToMei (s.score, {})).wellFormed);
+    CHECK (! s.run (tuneReq ({ 38, 45, 50, 55, 59, 64 })).ok);   // it is in that tuning already
+
+    // edits go on in that tuning: a half step up on the note of the tab, and the string buttons
+    CHECK (s.run (req ("pitch", idOf (s.score, 0, 2), "semitones", 1)).ok);
+    CHECK_STR (tabLine (s.score).c_str(), "6:3 5:0 4:0 3:0");
+    CHECK_STR (tabProblems (s.score).c_str(), "");
+    CHECK (s.run (req ("pitch", idOf (s.score, 0, 2), "semitones", -1)).ok);
+
+    // seven strings: the courses are numbered again, the tab staff has seven lines
+    CHECK (s.run (tuneReq ({ 35, 40, 45, 50, 55, 59, 64 })).ok);
+    CHECK_STR (tabLine (s.score).c_str(), "6:0 5:0 4:0 3:0");
+    CHECK_STR (tabProblems (s.score).c_str(), "");
+    CHECK (scoreToMei (s.score, {}).find ("lines=\"7\"") != std::string::npos);
+    CHECK (scoreToMei (s.score, {}).find ("n=\"7\" pname=\"b\" oct=\"1\"") != std::string::npos);
+
+    // and back to the standard tuning
+    CHECK (s.run (tuneReq ({ 40, 45, 50, 55, 59, 64 })).ok);
+    CHECK_STR (tabLine (s.score).c_str(), "6:0 5:0 4:0 3:0");
+    CHECK (scoreToMei (s.score, {}).find ("Tuning:") == std::string::npos);
+
+    // strings that cannot play a note refuse the change, and nothing changes; what is not a tuning is refused
+    const auto bad = s.run (tuneReq ({ 42, 47, 52, 57, 61, 66 }));
+    CHECK (! bad.ok);
+    CHECK (bad.message.find ("cannot be played") != std::string::npos);
+    CHECK (! s.run (tuneReq ({ 40, 45, 50 })).ok);
+    CHECK (! s.run (tuneReq ({ 40, 40, 50, 55, 59, 64 })).ok);
+    auto words = Json::object();
+    words.set ("op", "tuning");
+    words.set ("tuning", "banana");
+    CHECK (! s.run (words).ok);
+
+    // a bass with five strings, one voice of undo
+    Session b (fretted ({ { p ("E1"), 0, 1 }, { p ("A1"), 1, 1 }, { p ("D2"), 2, 1 }, { p ("G2"), 3, 1 } }, 4.0, InstrumentType::bass));
+    CHECK (b.run (tuneReq ({ 23, 28, 33, 38, 43 })).ok);
+    CHECK_STR (tabProblems (b.score).c_str(), "");
+    CHECK (scoreToMei (b.score, {}).find ("lines=\"5\"") != std::string::npos);
+    CHECK (b.run (req ("pitch", idOf (b.score, 1, 2), "semitones", 2)).ok);
+    CHECK_STR (tabProblems (b.score).c_str(), "");
+
+    // a piano score has no strings
+    Session piano (pianoScore ({ { p ("C4"), 0, 1 } }, 4.0, 0));
+    CHECK (! piano.run (tuneReq ({ 40, 45, 50, 55, 59, 64 })).ok);
+}
+REGISTER (testTuningEdits, "edit: a new tuning for a guitar or bass score, in one undo step");
+
+#ifdef TRANSCRIBER_FIXTURES_DIR
+// The clips of the Phase 8f test sheet.
+static void testTuningClips()
+{
+    const auto guitar = midireader::read (std::string (TRANSCRIBER_FIXTURES_DIR) + "/t84-low-guitar.mid");
+    CHECK (guitar.ok);
+    const auto automatic = transcribeFretted (guitar.capture, {}, InstrumentType::guitar);
+    CHECK_STR (automatic.report.tuning.c_str(), "7 strings (B standard)");
+    CHECK_EQ (automatic.report.notes, 11);
+    CHECK_STR (tabProblems (automatic.score).c_str(), "");
+
+    TranscriptionSettings standard;
+    standard.tuning = tuningText (openStrings (InstrumentType::guitar));
+    const auto six = transcribeFretted (guitar.capture, standard, InstrumentType::guitar);
+    bool left = false;
+    for (const auto& w : six.report.warnings)
+        left = left || w.find ("cannot be played on a 6-string guitar") != std::string::npos;
+    CHECK (left);
+
+    TranscriptionSettings dropD;
+    dropD.tuning = "38 45 50 55 59 64";
+    CHECK (dumpScore (transcribeFretted (guitar.capture, dropD, InstrumentType::guitar).score).find ("S2 v1: 6:0/4 5:0/4 4:0/4 3:0/4") != std::string::npos);
+
+    // an edited score changes its strings as an edit, from the 7-string one back to the standard, if every note fits
+    Session s (automatic.score);
+    CHECK (s.run (req ("pitch", idOf (s.score, 0), "semitones", 2)).ok);
+    CHECK (! s.run (tuneReq (openStrings (InstrumentType::guitar))).ok);   // the B1 does not fit
+    CHECK (s.run (tuneReq ({ 30, 35, 40, 45, 50, 55, 59, 64 })).ok);       // eight strings
+    CHECK_STR (tabProblems (s.score).c_str(), "");
+
+    const auto bass = midireader::read (std::string (TRANSCRIBER_FIXTURES_DIR) + "/t85-low-bass.mid");
+    CHECK (bass.ok);
+    const auto five = transcribeFretted (bass.capture, {}, InstrumentType::bass);
+    CHECK_STR (five.report.tuning.c_str(), "5 strings (B E A D G)");
+    CHECK_STR (tabProblems (five.score).c_str(), "");
+    CHECK (xmlcheck::checkXml (scoreToMei (five.score, {})).wellFormed);
+}
+REGISTER (testTuningClips, "edit: the guitar and bass clips of the Phase 8f test sheet");
+#endif

@@ -798,6 +798,63 @@ namespace
         CHECK_EQ ((int) again.getStatus().getProperty ("defaultTranspose", 99), 5);
     }
 
+
+    void testTunings()
+    {
+        CaptureService service;
+        service.setInstrument ("guitar");
+        record (service, 4, 0);
+        CHECK (waitForVersions (service, 1));
+
+        auto status = service.getStatus();
+        CHECK (status.getProperty ("tunings", {}).size() >= 5);
+        CHECK_STR (status.getProperty ("settings", {}).getProperty ("tuning", {}).toString().toRawUTF8(), "auto");
+        CHECK_STR (status.getProperty ("transcription", {}).getProperty ("tuningName", {}).toString().toRawUTF8(), "Standard");
+
+        // a tuning from the list: the take is written again for those strings
+        service.setTuning ("preset:dropd");
+        status = service.getStatus();
+        CHECK_STR (status.getProperty ("settings", {}).getProperty ("tuning", {}).toString().toRawUTF8(), "38 45 50 55 59 64");
+        CHECK_STR (status.getProperty ("transcription", {}).getProperty ("tuningName", {}).toString().toRawUTF8(), "Drop D");
+        CHECK (status.getProperty ("tuningMessage", {}).toString().isEmpty());
+
+        // typed by the user
+        service.setTuning ("D2 A2 D3 G3 B3 D4");
+        status = service.getStatus();
+        CHECK_STR (status.getProperty ("settings", {}).getProperty ("tuning", {}).toString().toRawUTF8(), "38 45 50 55 59 62");
+        CHECK_STR (status.getProperty ("transcription", {}).getProperty ("tuningName", {}).toString().toRawUTF8(), "Double drop D");
+
+        // what is wrong is said, and nothing changes
+        service.setTuning ("D2 A2 D3");
+        status = service.getStatus();
+        CHECK (status.getProperty ("tuningMessage", {}).toString().contains ("4 to 8"));
+        CHECK_STR (status.getProperty ("settings", {}).getProperty ("tuning", {}).toString().toRawUTF8(), "38 45 50 55 59 62");
+        service.setTuning ("banana");
+        CHECK (service.getStatus().getProperty ("tuningMessage", {}).toString().isNotEmpty());
+        service.setTuning ("auto");
+        CHECK (service.getStatus().getProperty ("tuningMessage", {}).toString().isEmpty());
+        CHECK_STR (service.getStatus().getProperty ("settings", {}).getProperty ("tuning", {}).toString().toRawUTF8(), "auto");
+
+        // an edited score is not written again: the tuning is an edit (one undo step), and Automatic is not possible
+        const auto ids = noteIdsOf (service.getMei().getProperty ("mei", {}).toString());
+        CHECK (ids.size() >= 1);
+        CHECK ((bool) service.editScore (editRequest ("pitch", ids[0], 1)).getProperty ("ok", false));
+        service.setTuning ("preset:dropd");
+        status = service.getStatus();
+        CHECK_STR (status.getProperty ("transcription", {}).getProperty ("tuningName", {}).toString().toRawUTF8(), "Drop D");
+        CHECK_STR (status.getProperty ("edit", {}).getProperty ("undoName", {}).toString().toRawUTF8(), "Change tuning");
+        CHECK_STR (status.getProperty ("settings", {}).getProperty ("tuning", {}).toString().toRawUTF8(), "auto");   // the settings are not used any more
+        service.setTuning ("auto");
+        CHECK (service.getStatus().getProperty ("tuningMessage", {}).toString().contains ("discard"));
+        CHECK ((bool) service.editScore (editRequest ("undo", {})).getProperty ("ok", false));
+        CHECK_STR (service.getStatus().getProperty ("transcription", {}).getProperty ("tuningName", {}).toString().toRawUTF8(), "Standard");
+
+        // for a piano there are no strings (the edits go first: an edited score keeps its instrument)
+        service.discardEdits();
+        service.setInstrument ("piano");
+        CHECK_EQ (service.getStatus().getProperty ("tunings", {}).size(), 0);
+    }
+
     struct Test { const char* name; void (*fn)(); };
 
 
@@ -816,6 +873,7 @@ namespace
         { "service: editing the score", testEditing },
         { "service: selecting several notes", testSelecting },
         { "service: transposition", testTransposing },
+        { "service: tunings", testTunings },
     };
 }
 

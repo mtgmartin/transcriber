@@ -1,6 +1,7 @@
 #include "Instruments.h"
 
 #include <algorithm>
+#include <cctype>
 
 namespace trs
 {
@@ -29,6 +30,313 @@ std::vector<int> openStrings (InstrumentType t)
     if (t == InstrumentType::guitar) return { 40, 45, 50, 55, 59, 64 };
     if (t == InstrumentType::bass)   return { 28, 33, 38, 43 };
     return {};
+}
+
+//==============================================================================
+// Tunings (Phase 8f)
+
+std::vector<TuningPreset> tuningPresets (InstrumentType t)
+{
+    if (t == InstrumentType::guitar)
+        return { { "std", "Standard", { 40, 45, 50, 55, 59, 64 } },
+                 { "dropd", "Drop D", { 38, 45, 50, 55, 59, 64 } },
+                 { "dropdd", "Double drop D", { 38, 45, 50, 55, 59, 62 } },
+                 { "dadgad", "DADGAD", { 38, 45, 50, 55, 57, 62 } },
+                 { "openg", "Open G", { 38, 43, 50, 55, 59, 62 } },
+                 { "opend", "Open D", { 38, 45, 50, 54, 57, 62 } },
+                 { "opene", "Open E", { 40, 47, 52, 56, 59, 64 } },
+                 { "half", "Half step down", { 39, 44, 49, 54, 58, 63 } },
+                 { "whole", "Whole step down (D standard)", { 38, 43, 48, 53, 57, 62 } },
+                 { "dropc", "Drop C", { 36, 43, 48, 53, 57, 62 } },
+                 { "cstd", "C standard", { 36, 41, 46, 51, 55, 60 } },
+                 { "g7", "7 strings (B standard)", { 35, 40, 45, 50, 55, 59, 64 } },
+                 { "g8", "8 strings (F# standard)", { 30, 35, 40, 45, 50, 55, 59, 64 } } };
+
+    if (t == InstrumentType::bass)
+        return { { "std", "Standard", { 28, 33, 38, 43 } },
+                 { "dropd", "Drop D", { 26, 33, 38, 43 } },
+                 { "half", "Half step down", { 27, 32, 37, 42 } },
+                 { "whole", "Whole step down (D standard)", { 26, 31, 36, 41 } },
+                 { "b5", "5 strings (B E A D G)", { 23, 28, 33, 38, 43 } },
+                 { "b6", "6 strings (B E A D G C)", { 23, 28, 33, 38, 43, 48 } } };
+
+    return {};
+}
+
+std::string noteNameOf (int midi)
+{
+    static const char* const names[12] = { "C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B" };
+    const auto pc = ((midi % 12) + 12) % 12;
+    const auto octave = (midi - pc) / 12 - 1;
+    return std::string (names[pc]) + std::to_string (octave);
+}
+
+std::string tuningText (const std::vector<int>& notes)
+{
+    std::string text;
+
+    for (const auto n : notes)
+        text += (text.empty() ? "" : " ") + std::to_string (n);
+
+    return text;
+}
+
+std::vector<int> tuningFromText (const std::string& text)
+{
+    std::vector<int> out;
+    size_t at = 0;
+
+    while (at < text.size())
+    {
+        while (at < text.size() && text[at] == ' ')
+            ++at;
+
+        if (at >= text.size())
+            break;
+
+        size_t end = at;
+
+        while (end < text.size() && text[end] >= '0' && text[end] <= '9')
+            ++end;
+
+        if (end == at || (end < text.size() && text[end] != ' ') || end - at > 3)
+            return {};
+
+        const int value = std::stoi (text.substr (at, end - at));
+
+        if (value > 127)
+            return {};
+
+        out.push_back (value);
+        at = end;
+    }
+
+    return out;
+}
+
+bool tuningFromNames (const std::string& text, std::vector<int>& out, std::string& error)
+{
+    out.clear();
+    std::vector<std::string> words;
+    std::string word;
+
+    for (const auto c : text)
+    {
+        if (c == ' ' || c == ',' || c == ';' || c == '\t')
+        {
+            if (! word.empty())
+                words.push_back (word);
+
+            word.clear();
+        }
+        else
+        {
+            word += c;
+        }
+    }
+
+    if (! word.empty())
+        words.push_back (word);
+
+    if (words.empty())
+    {
+        error = "Type the notes of the strings from the lowest, for example D2 A2 D3 G3 B3 E4 (or MIDI numbers).";
+        return false;
+    }
+
+    static const int pcs[7] = { 9, 11, 0, 2, 4, 5, 7 };   // A B C D E F G
+
+    for (const auto& w : words)
+    {
+        const bool digits = std::all_of (w.begin(), w.end(), [] (char c) { return c >= '0' && c <= '9'; });
+
+        if (digits)
+        {
+            if (w.size() > 3 || std::stoi (w) > 127)
+            {
+                error = "\"" + w + "\" is not a MIDI note (0 to 127).";
+                return false;
+            }
+
+            out.push_back (std::stoi (w));
+            continue;
+        }
+
+        const auto letter = (char) std::toupper ((unsigned char) w[0]);
+
+        if (letter < 'A' || letter > 'G')
+        {
+            error = "\"" + w + "\" is not a note: write a letter A to G, an optional # or b, and the octave, for example F#2.";
+            return false;
+        }
+
+        size_t i = 1;
+        int alter = 0;
+
+        while (i < w.size() && (w[i] == '#' || w[i] == 'b' || w[i] == 'B'))
+        {
+            alter += w[i] == '#' ? 1 : -1;
+            ++i;
+        }
+
+        const bool negative = i < w.size() && w[i] == '-';
+
+        if (negative)
+            ++i;
+
+        if (i >= w.size() || ! std::all_of (w.begin() + (std::ptrdiff_t) i, w.end(), [] (char c) { return c >= '0' && c <= '9'; }) || w.size() - i > 1)
+        {
+            error = "\"" + w + "\" has no octave: write for example " + std::string (1, letter) + "2.";
+            return false;
+        }
+
+        const int octave = (negative ? -1 : 1) * (w[i] - '0');
+        const int midi = 12 * (octave + 1) + pcs[letter - 'A'] + alter;
+
+        if (midi < 0 || midi > 127)
+        {
+            error = "\"" + w + "\" is outside the MIDI notes 0 to 127.";
+            return false;
+        }
+
+        out.push_back (midi);
+    }
+
+    return true;
+}
+
+bool validTuning (InstrumentType t, const std::vector<int>& notes, std::string* why)
+{
+    auto no = [&] (const std::string& message)
+    {
+        if (why != nullptr)
+            *why = message;
+
+        return false;
+    };
+
+    if (t != InstrumentType::guitar && t != InstrumentType::bass)
+        return no ("Only a guitar or a bass has strings.");
+
+    const size_t most = t == InstrumentType::guitar ? 8 : 6;
+
+    if (notes.size() < 4 || notes.size() > most)
+        return no ((t == InstrumentType::guitar ? "A guitar has 4 to 8 strings" : "A bass has 4 to 6 strings") + std::string (", not ") + std::to_string (notes.size()) + ".");
+
+    for (size_t i = 0; i < notes.size(); ++i)
+    {
+        if (notes[i] < 0 || notes[i] > 127)
+            return no ("The notes must be MIDI notes from 0 to 127.");
+
+        if (i > 0 && notes[i] <= notes[i - 1])
+            return no ("The strings must go up from the lowest: " + noteNameOf (notes[i]) + " is not above " + noteNameOf (notes[i - 1]) + ".");
+    }
+
+    return true;
+}
+
+std::string tuningName (InstrumentType t, const std::vector<int>& notes)
+{
+    for (const auto& p : tuningPresets (t))
+        if (p.notes == notes)
+            return p.name;
+
+    return tuningLetters (notes);
+}
+
+std::string tuningLetters (const std::vector<int>& notes)
+{
+    std::string letters;
+
+    for (const auto n : notes)
+    {
+        auto name = noteNameOf (n);
+        name.erase (std::find_if (name.begin(), name.end(), [] (char c) { return (c >= '0' && c <= '9') || c == '-'; }), name.end());
+        letters += (letters.empty() ? "" : " ") + name;
+    }
+
+    return letters;
+}
+
+std::vector<int> chooseTuning (InstrumentType t, const std::vector<int>& pitches, int maxFret)
+{
+    const auto standard = openStrings (t);
+
+    if (standard.empty())
+        return standard;
+
+    auto missed = [&] (const std::vector<int>& tuning)
+    {
+        int n = 0;
+
+        for (const auto p : pitches)
+            if (p < tuning.front() || p > tuning.back() + maxFret)
+                ++n;
+
+        return n;
+    };
+
+    if (missed (standard) == 0)
+        return standard;
+
+    // the candidates, the ones a player would think of first at the top: a drop tuning, an extra low string, everything tuned
+    // down, a drop tuning of that, any other lower string, an extra low string and everything tuned down
+    std::vector<std::vector<int>> candidates;
+    const auto down = [&] (int semitones) { auto v = standard; for (auto& n : v) n -= semitones; return v; };
+    const auto lowered = [&] (std::vector<int> v, int semitones) { v.front() -= semitones; return v; };
+    const auto withLow = [&] (std::vector<int> v) { v.insert (v.begin(), v.front() - 5); return v; };
+    const auto limit = t == InstrumentType::guitar ? (size_t) 8 : (size_t) 6;
+    const auto room = [&] (const std::vector<int>& v) { return v.size() <= limit && v.front() >= 0 && v.back() + maxFret <= 127; };
+
+    auto add = [&] (const std::vector<int>& v)
+    {
+        if (room (v) && std::find (candidates.begin(), candidates.end(), v) == candidates.end())
+            candidates.push_back (v);
+    };
+
+    add (lowered (standard, 2));
+    add (withLow (standard));
+
+    for (int s = 1; s <= 4; ++s)
+        add (down (s));
+
+    for (int s = 1; s <= 4; ++s)
+        add (lowered (down (s), 2));
+
+    for (int d = 1; d <= 7; ++d)
+        add (lowered (standard, d));
+
+    for (int s = 1; s <= 4; ++s)
+        add (withLow (down (s)));
+
+    add (withLow (withLow (standard)));
+
+    // a bass with six strings also has a high C
+    if (t == InstrumentType::bass)
+    {
+        auto six = withLow (standard);
+        six.push_back (standard.back() + 5);
+        add (six);
+    }
+
+    int bestMissed = missed (standard);
+    std::vector<int> best = standard;
+
+    for (const auto& c : candidates)
+    {
+        const auto m = missed (c);
+
+        if (m == 0)
+            return c;
+
+        if (m < bestMissed)
+        {
+            bestMissed = m;
+            best = c;
+        }
+    }
+
+    return best;
 }
 
 //==============================================================================

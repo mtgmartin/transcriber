@@ -43,6 +43,10 @@ public:
     // The instrument of the version that is shown ("piano", "drums", "guitar", "bass"); new recordings get it too.
     void setInstrument (const juce::String& type);
 
+    // The strings of a guitar or bass score: "auto", "preset:<id>", or notes typed by the user ("D2 A2 D3 G3 B3 E4", MEI numbers). What is
+    // wrong is said in the status ("tuningMessage"). On a score that was edited the tuning is changed as an edit.
+    void setTuning (const juce::String& request);
+
     // Drum maps. The built-in ones ("gm", "gm2") cannot be changed; saving a changed built-in map makes a copy.
     // The functions that can fail give an empty string on success, else the reason.
     void selectDrumMap (const juce::String& id);
@@ -123,6 +127,7 @@ private:
 
     // The score as text for the page, worked out again only when the version changes.
     mutable std::string scoreTextKey, scoreTextCache;
+    juce::String tuningMessage;   // why the last tuning request was refused (empty: it was done)
     mutable std::string meiKey, meiCache;
 
     mutable uint64_t sizedRevision = ~(uint64_t) 0;

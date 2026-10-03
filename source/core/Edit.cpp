@@ -602,9 +602,16 @@ namespace
         return at->type == node->type ? at->id : id;
     }
 
+    // The open strings of a tab staff: what it says (a guitar or bass written before tunings could change has the standard one).
     std::vector<int> openStringsOf (const Node& tabStaff)
     {
-        return openStrings (tabStaff.prop ("strings").asInt (6) == 4 ? InstrumentType::bass : InstrumentType::guitar);
+        const auto strings = (size_t) tabStaff.prop ("strings").asInt (6);
+        const auto saved = tuningFromText (tabStaff.prop ("tuning").asString());
+
+        if (! saved.empty() && saved.size() == strings)
+            return saved;
+
+        return openStrings (strings == 4 ? InstrumentType::bass : InstrumentType::guitar);
     }
 
     // The staff, measure, voice and event an edit works on, with a copy of the measures to change.
@@ -2124,11 +2131,12 @@ namespace
 
     // After an edit of the notation staff of a guitar or bass score: the tab staff gets the same events with strings
     // and frets. A note that stays as it was stays on its string; a new or changed note is placed near the hand.
-    bool syncTab (Edit& e, std::vector<ReplaceChildrenCommand::Change>& changes, std::string& problem)
+    // `retuned`: the strings the tab is written for now (a tuning change: every note is placed again).
+    bool syncTab (Edit& e, std::vector<ReplaceChildrenCommand::Change>& changes, std::string& problem, const std::vector<int>* retuned = nullptr)
     {
-        const auto open = openStringsOf (*e.tab);
+        const auto open = retuned != nullptr ? *retuned : openStringsOf (*e.tab);
         const int strings = (int) open.size();
-        const std::string instrument = strings == 4 ? "bass" : "guitar";
+        const std::string instrument = e.part != nullptr && e.part->prop ("name").asString() == "Bass" ? "bass" : "guitar";
 
         if (e.tab->children.size() != e.measures.size() || e.staff->children.size() != e.measures.size())
         {
@@ -2152,7 +2160,7 @@ namespace
         // where every notation note was played before the edit (read from the old tab, by position)
         std::map<std::string, TabNote> before;
 
-        for (size_t i = 0; i < e.tab->children.size(); ++i)
+        for (size_t i = 0; retuned == nullptr && i < e.tab->children.size(); ++i)   // (a new tuning places every note again)
         {
             const auto& tm = e.tab->children[i];
             const auto& sm = e.staff->children[i];
@@ -3354,6 +3362,62 @@ namespace
     }
 
 
+    // The tab of a guitar or bass score is written for other strings: every note is placed again (a note that cannot be played on
+    // the new strings refuses the change). One undo step.
+    EditResult retune (Score& score, UndoManager& undo, const std::string& text)
+    {
+        const Node* part = nullptr;
+
+        for (const auto& c : score.root().children)
+            if (c.type == nodeType::part && tabStaffOf (c) != nullptr)
+                part = &c;
+
+        if (part == nullptr)
+            return fail ("Only a guitar or a bass has strings.");
+
+        const auto* tab = tabStaffOf (*part);
+        const auto* staff = notationStaffOf (*part);
+        const auto type = part->prop ("name").asString() == "Bass" ? InstrumentType::bass : InstrumentType::guitar;
+        const auto notes = tuningFromText (text);
+        std::string why;
+
+        if (notes.empty() || ! validTuning (type, notes, &why))
+            return fail (notes.empty() ? "That is not a tuning." : why);
+
+        if (openStringsOf (*tab) == notes)
+            return fail ("The score is in that tuning already.");
+
+        Edit e (score);
+        e.part = part;
+        e.tab = tab;
+        e.staff = staff;
+        e.measures = staff->children;
+        e.fifths = (int) score.root().prop ("keyFifths").asInt();
+
+        std::vector<ReplaceChildrenCommand::Change> changes;
+        std::string problem;
+
+        if (! syncTab (e, changes, problem, &notes))
+            return fail (problem.empty() ? "The notes cannot be played on those strings." : problem);
+
+        undo.beginGroup ("Change tuning");
+        bool ok = undo.perform (std::make_unique<SetPropertyCommand> (tab->id, "strings", Json ((int) notes.size()), "Change tuning"));
+        ok = ok && undo.perform (std::make_unique<SetPropertyCommand> (tab->id, "tuning", Json (tuningText (notes)), "Change tuning"));
+
+        if (ok && ! changes.empty())
+            ok = undo.perform (std::make_unique<ReplaceChildrenCommand> (std::move (changes), "Change tuning"));
+
+        undo.endGroup();
+
+        if (! ok)
+        {
+            undo.undo();
+            return fail ("The change did not fit the score.");
+        }
+
+        return success ("Tuned to " + tuningName (type, notes) + ".");
+    }
+
     // A new key signature for the whole score: every note is spelled for it again (pitches stay), the accidentals
     // are worked out again. One undo step.
     EditResult changeKey (Score& score, UndoManager& undo, int fifths, bool minor)
@@ -3551,6 +3615,9 @@ EditResult performOn (Score& score, UndoManager& undo, const Json& request)
 
     if (const auto refused = refusedForDrums (score, op); ! refused.empty())
         return fail (refused);
+
+    if (op == "tuning")
+        return retune (score, undo, request.get ("tuning").asString());
 
     if (op == "key")
         return changeKey (score, undo, (int) request.get ("fifths").asInt(), request.get ("minor").asBool());
