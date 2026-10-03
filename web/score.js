@@ -183,8 +183,30 @@
     else if (announce) selectedId = "";
   }
 
+  // The note, rest or chord that was clicked. The inside of an open notehead (half and whole notes) is a hole in
+  // the drawing and does not take the click, so the boxes of the notes of that page are tried as well.
+  function hit(e) {
+    const direct = e.target.closest ? e.target.closest("g.note, g.rest, g.mRest, g.chord") : null;
+    if (direct) return direct;
+
+    const sheet = e.target.closest ? e.target.closest(".sheet") : null;
+    if (!sheet) return null;
+
+    let best = null, bestArea = Infinity;
+    const pad = 2;
+
+    sheet.querySelectorAll("g.note, g.rest, g.mRest").forEach(function (el) {
+      const r = el.getBoundingClientRect();
+      if (e.clientX < r.left - pad || e.clientX > r.right + pad || e.clientY < r.top - pad || e.clientY > r.bottom + pad) return;
+      const area = r.width * r.height;
+      if (area < bestArea) { best = el; bestArea = area; }
+    });
+
+    return best;
+  }
+
   holder.addEventListener("click", function (e) {
-    const target = e.target.closest ? e.target.closest("g.note, g.rest, g.mRest, g.chord") : null;
+    const target = hit(e);
     if (!target) {
       select("");
       return;

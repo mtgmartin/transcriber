@@ -36,9 +36,9 @@ F4 G4 (eighths), A4 (quarter); bar 3 C5 (whole). Left hand: C3 whole notes. Reco
 
 ## 7a.3 Rests and notes
 - Select D4, press **Delete**: it becomes a quarter rest. Press **F**: a quarter F4 stands there again (nearest to the music before).
-- Select the half note E4, press **4**: it is a quarter, followed by a quarter rest. Press **6**: a half note again, the rest is gone.
+- Select the half note E4 (click anywhere on it, also inside the open head), press **5**: it is a quarter, followed by a quarter rest; **4** gives an eighth. Press **6**: a half note again, the rest is gone.
 - Select the first C4 of bar 2, press **6** (half note): it takes the second C4 (the line says the note after it was taken out). Undo brings it back.
-- Select the quarter D4, press **.**: dotted quarter. It runs into the half note E4, which is taken out (the line says so), and an eighth rest is left. Press **.** again: the dot is gone, the rests join. Undo twice brings E4 back.
+- Select the quarter D4, press **Dot** (the key is the full stop): dotted quarter. It runs into the half note E4, which is taken out (the line says so), and an eighth rest is left. Press Dot again: the dot is gone, the rests join. Undo twice brings E4 back.
 - Select the whole note C5 in bar 3, press **Delete**: the bar shows a measure rest. Press **E**: a whole note E (nearest to the music before).
 
 ## 7a.4 Ties and chords

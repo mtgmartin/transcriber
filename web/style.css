@@ -58,7 +58,7 @@ details .inner { display: grid; grid-template-columns: repeat(auto-fit, minmax(3
 #ver-list button.danger { background: #5a2323; border-color: #f08a8a; }
 #ver-list input[type=text] { font: inherit; width: 100%; color: var(--ink); background: #26304a; border: 1px solid var(--accent); border-radius: 4px; padding: 3px 6px; }
 .result.warn { color: #f0c36f; }
-select:disabled, input:disabled { opacity: 0.5; }
+select:disabled, input:disabled, button:disabled { opacity: 0.45; }
 #score-text { max-height: 360px; }
 
 #notation-view { background: #c9ced8; border-radius: 4px; height: 460px; min-height: 160px; overflow: auto; resize: vertical; padding: 10px 0; }
