@@ -154,7 +154,7 @@ namespace
                                     return "a chord of one note";
                             }
 
-                            if (e.type == nodeType::note)
+                            if (e.type == nodeType::note && staff.prop ("kind").asString() != "tab")
                             {
                                 const char* names = "CDEFGAB";
                                 const auto step = e.prop ("step").asString();
@@ -583,21 +583,442 @@ REGISTER (testUndo, "edit: undo and redo as operations");
 
 static void testBlocked()
 {
-    // guitar and drums are not edited yet
+    // guitar and bass are edited (the tab follows); drums are not edited yet
     TranscriptionSettings settings;
     ResolvedCapture rc = takeOf ({ { 40, 0, 1 } }, 4.0);
     auto guitar = transcribeFretted (rc, settings, InstrumentType::guitar).score;
-    UndoManager undo (guitar);
-    CHECK (! editBlocker (guitar).empty());
-    CHECK (! performEdit (guitar, undo, req ("delete", idOf (guitar, 0))).ok);
+    auto bass = transcribeFretted (takeOf ({ { 28, 0, 1 } }, 4.0), settings, InstrumentType::bass).score;
+    CHECK (editBlocker (guitar).empty());
+    CHECK (editBlocker (bass).empty());
 
     auto drums = transcribeDrums (takeOf ({ { 38, 0, 0.1 } }, 4.0), settings, drumPreset ("gm")).score;
     CHECK (! editBlocker (drums).empty());
+    UndoManager undo (drums);
+    CHECK (! performEdit (drums, undo, req ("delete", idOf (drums, 0))).ok);
 
     Score empty;
     CHECK (! editBlocker (empty).empty());
 }
-REGISTER (testBlocked, "edit: guitar, bass and drum scores are refused");
+REGISTER (testBlocked, "edit: drum scores are refused");
+
+//==============================================================================
+// Phase 7e: guitar and bass. The notation staff is edited and the tab staff follows.
+
+#include "core/Instruments.h"
+#include "core/Mei.h"
+#include "XmlCheck.h"
+
+namespace
+{
+    Score fretted (std::vector<N> notes, double length, InstrumentType type = InstrumentType::guitar, int beatsPerBar = 4)
+    {
+        TranscriptionSettings settings;
+        return transcribeFretted (takeOf (notes, length, beatsPerBar), settings, type).score;
+    }
+
+    // "6:0 5:1 r [3:0 2:0]": the tab events of a score, as course:fret.
+    std::string tabLine (const Score& score)
+    {
+        std::string out;
+
+        for (const auto* e : events (score, 2))
+        {
+            auto one = [] (const Node& n) { return std::to_string (n.prop ("course").asInt()) + ":" + std::to_string (n.prop ("fret").asInt()); };
+            std::string text;
+
+            if (e->type == nodeType::rest)
+            {
+                text = "r";
+            }
+            else if (e->type == nodeType::note)
+            {
+                text = one (*e);
+            }
+            else
+            {
+                text = "[";
+
+                for (const auto& n : e->children)
+                    text += (text.size() > 1 ? " " : "") + one (n);
+
+                text += "]";
+            }
+
+            out += (out.empty() ? "" : " ") + text;
+        }
+
+        return out;
+    }
+
+    // The tab staff says what the notation staff says: the same events, every tab note the pitch of its notation note,
+    // on a string that can play it, no string used twice in a chord.
+    std::string tabProblems (const Score& score)
+    {
+        const Node* part = nullptr;
+
+        for (const auto& c : score.root().children)
+            if (c.type == nodeType::part)
+                part = &c;
+
+        if (part == nullptr)
+            return {};
+
+        const Node* notation = nullptr;
+        const Node* tab = nullptr;
+
+        for (const auto& s : part->children)
+        {
+            if (s.prop ("kind").asString() == "tab")
+                tab = &s;
+            else if (notation == nullptr)
+                notation = &s;
+        }
+
+        if (tab == nullptr || notation == nullptr)
+            return {};
+
+        const int strings = (int) tab->prop ("strings").asInt (6);
+        const auto open = openStrings (strings == 4 ? InstrumentType::bass : InstrumentType::guitar);
+
+        if (tab->children.size() != notation->children.size())
+            return "the tab has another number of measures";
+
+        auto notesOf = [] (const Node& e)
+        {
+            std::vector<const Node*> notes;
+
+            if (e.type == nodeType::note)
+                notes.push_back (&e);
+            else if (e.type == nodeType::chord)
+                for (const auto& n : e.children)
+                    notes.push_back (&n);
+
+            return notes;
+        };
+
+        for (size_t i = 0; i < notation->children.size(); ++i)
+        {
+            std::vector<const Node*> a, b;
+
+            for (const auto& l : notation->children[i].children) if (l.type == nodeType::layer) a.push_back (&l);
+            for (const auto& l : tab->children[i].children) if (l.type == nodeType::layer) b.push_back (&l);
+
+            if (a.size() != b.size())
+                return "measure " + std::to_string (i + 1) + ": another number of voices in the tab";
+
+            for (size_t l = 0; l < a.size(); ++l)
+            {
+                if (a[l]->children.size() != b[l]->children.size())
+                    return "measure " + std::to_string (i + 1) + ": another number of events in the tab";
+
+                for (size_t k = 0; k < a[l]->children.size(); ++k)
+                {
+                    const auto& x = a[l]->children[k];
+                    const auto& y = b[l]->children[k];
+
+                    if (x.type != y.type)
+                        return "measure " + std::to_string (i + 1) + ": a note and a chord do not match";
+
+                    for (const char* key : { "onset", "ticks", "dur", "dots", "tuplet", "beam", "measureRest" })
+                        if (! (x.prop (key) == y.prop (key)))
+                            return std::string ("measure ") + std::to_string (i + 1) + ": the tab differs in " + key;
+
+                    auto xn = notesOf (x), yn = notesOf (y);
+
+                    if (xn.size() != yn.size())
+                        return "measure " + std::to_string (i + 1) + ": the tab has another number of notes";
+
+                    std::set<int64_t> courses;
+
+                    for (size_t j = 0; j < xn.size(); ++j)
+                    {
+                        if (! (xn[j]->prop ("pitch") == yn[j]->prop ("pitch")))
+                            return "measure " + std::to_string (i + 1) + ": the pitch of a tab note differs";
+
+                        if (! (xn[j]->prop ("tie") == yn[j]->prop ("tie")))
+                            return "measure " + std::to_string (i + 1) + ": the tie of a tab note differs";
+
+                        const auto string = strings - (int) yn[j]->prop ("course").asInt();
+                        const auto fret = (int) yn[j]->prop ("fret").asInt();
+
+                        if (string < 0 || string >= strings || fret < 0 || fret > 22 || fret != (int) yn[j]->prop ("pitch").asInt() - open[(size_t) string])
+                            return "measure " + std::to_string (i + 1) + ": a tab note is on a string that cannot play it";
+
+                        if (! courses.insert (yn[j]->prop ("course").asInt()).second)
+                            return "measure " + std::to_string (i + 1) + ": two notes on one string";
+
+                        if (yn[j]->has ("step") || yn[j]->has ("accid") || yn[j]->has ("dyn") || yn[j]->has ("artic"))
+                            return "a tab note has notation properties";
+                    }
+                }
+            }
+        }
+
+        return {};
+    }
+}
+
+
+static Json stringReq (const std::string& id, const char* direction)
+{
+    auto j = req ("string", id);
+    j.set ("dir", direction);
+    return j;
+}
+
+static void testGuitarEdits()
+{
+    Session s (fretted ({ { p ("E2"), 0, 1 }, { p ("A2"), 1, 1 }, { p ("D3"), 2, 1 }, { p ("G3"), 3, 1 }, { p ("B3"), 3, 1 } }, 4.0));
+    CHECK_STR (tabLine (s.score).c_str(), "6:0 5:0 4:0 [3:0 2:0]");
+    CHECK_STR (tabProblems (s.score).c_str(), "");
+
+    // a pitch change in the notation moves the note in the tab
+    CHECK (s.run (req ("pitch", idOf (s.score, 1), "semitones", 1)).ok);
+    CHECK_STR (tabLine (s.score).c_str(), "6:0 5:1 4:0 [3:0 2:0]");
+    CHECK_STR (right (s.score).c_str(), "m1 E2/4 A#2!/4 D3/4 [G3 B3]/4");
+
+    // the same edit from a click in the tab: it acts on the note of the notation, and the tab note stays selected
+    const auto tabNote = idOf (s.score, 1, 2);
+    CHECK_STR (tabNote.c_str(), (idOf (s.score, 1) + "-t").c_str());
+    const auto r = s.run (req ("pitch", tabNote, "semitones", -1));
+    CHECK (r.ok);
+    CHECK_STR (tabLine (s.score).c_str(), "6:0 5:0 4:0 [3:0 2:0]");
+
+    // below the lowest string, and a chord that cannot be played: refused, nothing changes
+    auto low = s.run (req ("pitch", idOf (s.score, 0), "semitones", -1));
+    CHECK (! low.ok);
+    CHECK (low.message.find ("cannot be played") != std::string::npos);
+    CHECK (! s.run (req ("interval", idOf (s.score, 0), "interval", 3)).ok);   // E2 and G2 are both on the lowest string
+
+    // a chord is made: the old note keeps its string
+    CHECK (s.run (req ("interval", idOf (s.score, 1), "interval", 3)).ok);
+    CHECK_STR (tabLine (s.score).c_str(), "6:0 [5:0 6:8] 4:0 [3:0 2:0]");
+    CHECK_STR (right (s.score).c_str(), "m1 E2/4 [A2 C3]/4 D3/4 [G3 B3]/4");
+
+    // a note becomes a rest in both staves; its length too
+    CHECK (s.run (req ("delete", idOf (s.score, 2, 2))).ok);
+    CHECK_STR (tabLine (s.score).c_str(), "6:0 [5:0 6:8] r [3:0 2:0]");
+    CHECK (s.run (req ("duration", idOf (s.score, 0, 2), "dur", 8)).ok);
+    CHECK_STR (right (s.score).c_str(), "m1 E2/8 r/8 [A2 C3]/4 r/4 [G3 B3]/4");
+    CHECK_STR (tabLine (s.score).c_str(), "6:0 r [5:0 6:8] r [3:0 2:0]");
+    CHECK_STR (tabProblems (s.score).c_str(), "");
+    CHECK_STR (problems (s.score).c_str(), "");
+
+    // one voice only
+    CHECK (! s.run (req ("voice", idOf (s.score, 0), "voice", 2)).ok);
+}
+REGISTER (testGuitarEdits, "edit: guitar notes, the tab follows");
+
+static void testStringMoves()
+{
+    Session s (fretted ({ { p ("E2"), 0, 1 }, { p ("A2"), 1, 1 }, { p ("D3"), 2, 1 }, { p ("G3"), 3, 1 }, { p ("B3"), 3, 1 } }, 4.0));
+
+    // the notation staff has no strings; the first note has no lower and no higher string it could use
+    CHECK (! s.run (stringReq (idOf (s.score, 1), "down")).ok);
+    CHECK (! s.run (stringReq (idOf (s.score, 0, 2), "down")).ok);   // no lower string
+    CHECK (! s.run (stringReq (idOf (s.score, 0, 2), "up")).ok);     // E2 does not exist on the A string
+
+    // A2 from the A string to the low E string, fret 5; the notation is the same
+    const auto before = right (s.score);
+    auto moved = s.run (stringReq (idOf (s.score, 1, 2), "down"));
+    CHECK (moved.ok);
+    CHECK_STR (moved.select.c_str(), idOf (s.score, 1, 2).c_str());
+    CHECK_STR (tabLine (s.score).c_str(), "6:0 6:5 4:0 [3:0 2:0]");
+    CHECK_STR (right (s.score).c_str(), before.c_str());
+
+    // and back up
+    CHECK (s.run (stringReq (idOf (s.score, 1, 2), "up")).ok);
+    CHECK_STR (tabLine (s.score).c_str(), "6:0 5:0 4:0 [3:0 2:0]");
+    CHECK (s.run (stringReq (idOf (s.score, 1, 2), "down")).ok);
+
+    // a chord: click one note of it; the other note's string is taken
+    const auto chordId = events (s.score, 2)[3]->id;
+    const auto lowNote = events (s.score, 2)[3]->children[0].id;
+    const auto highNote = events (s.score, 2)[3]->children[1].id;
+    CHECK (! s.run (stringReq (chordId, "down")).ok);        // the chord itself
+    CHECK (! s.run (stringReq (lowNote, "up")).ok);          // G3 up: the B string is used
+    CHECK (s.run (stringReq (lowNote, "down")).ok);
+    CHECK_STR (tabLine (s.score).c_str(), "6:0 6:5 4:0 [4:5 2:0]");
+
+    // other edits leave the notes that did not change where they are; the selected tab note stays selected (its id is renewed)
+    const auto oldTabId = idOf (s.score, 2, 2);
+    const auto edited = s.run (req ("pitch", oldTabId, "semitones", 1));
+    CHECK (edited.ok);
+    CHECK_STR (edited.select.c_str(), idOf (s.score, 2, 2).c_str());
+    CHECK_STR (edited.select.c_str(), (idOf (s.score, 2) + "-t").c_str());
+    CHECK_STR (tabLine (s.score).c_str(), "6:0 6:5 5:6 [4:5 2:0]");   // D#3 goes near the hand (A string, fret 6), not to the open-position D string
+
+    // a note of the chord changes, the other one stays on its string
+    const auto raised = s.run (req ("pitch", events (s.score, 2)[3]->children[1].id, "semitones", 1));
+    CHECK (raised.ok);
+    CHECK_STR (tabLine (s.score).c_str(), "6:0 6:5 5:6 [4:5 3:5]");   // B3 becomes C4: fret 5 on the G string, next to G3 on the D string
+    CHECK_STR (tabProblems (s.score).c_str(), "");
+}
+REGISTER (testStringMoves, "edit: moving a tab note to another string");
+
+static void testBassEdits()
+{
+    Session s (fretted ({ { 28, 0, 1 }, { 33, 1, 1 }, { 38, 2, 1 }, { 43, 3, 1 } }, 4.0, InstrumentType::bass));
+    CHECK_STR (tabLine (s.score).c_str(), "4:0 3:0 2:0 1:0");
+    CHECK (s.run (req ("pitch", idOf (s.score, 0), "semitones", 1)).ok);
+    CHECK_STR (tabLine (s.score).c_str(), "4:1 3:0 2:0 1:0");
+    CHECK (! s.run (req ("pitch", idOf (s.score, 0), "semitones", -2)).ok);   // below the E string
+    CHECK (s.run (stringReq (idOf (s.score, 1, 2), "down")).ok);
+    CHECK_STR (tabLine (s.score).c_str(), "4:1 4:5 2:0 1:0");
+    CHECK (! s.run (stringReq (idOf (s.score, 0, 2), "up")).ok);               // A#1 is below the A string
+    CHECK_STR (tabProblems (s.score).c_str(), "");
+}
+REGISTER (testBassEdits, "edit: bass notes and strings");
+
+static void testFrettedMarksKeyAndMei()
+{
+    Session s (fretted ({ { p ("E2"), 0, 1 }, { p ("A2"), 1, 1 }, { p ("D3"), 2, 1 }, { p ("G3"), 3, 1 } }, 4.0));
+    const auto tabBefore = tabLine (s.score);
+
+    // marks go on the notation notes (also when the click was in the tab), not on the tab
+    auto dyn = req ("dynamic", idOf (s.score, 1, 2));
+    dyn.set ("value", "mf");
+    CHECK (s.run (dyn).ok);
+    CHECK (s.run (req ("slur", idOf (s.score, 0), "count", 2)).ok);
+    auto text = req ("text", idOf (s.score, 2));
+    text.set ("text", "riff");
+    text.set ("place", "above");
+    CHECK (s.run (text).ok);
+    CHECK_STR (tabLine (s.score).c_str(), tabBefore.c_str());
+    CHECK_STR (tabProblems (s.score).c_str(), "");
+
+    // a key change spells the notation again and leaves the tab alone
+    Json key = Json::object();
+    key.set ("op", "key");
+    key.set ("fifths", -3);
+    key.set ("minor", false);
+    CHECK (s.run (key).ok);
+    CHECK_STR (tabLine (s.score).c_str(), tabBefore.c_str());
+    CHECK_STR (tabProblems (s.score).c_str(), "");
+
+    // layout works as for piano
+    auto first = req ("break", idOf (s.score, 0));
+    first.set ("mode", "system");
+    CHECK (! s.run (first).ok);   // the first measure cannot have a break
+
+    // the MEI has the marks once, on the notation staff, and the tab staff with its strings
+    const auto mei = scoreToMei (s.score, {});
+    CHECK (xmlcheck::checkXml (mei).wellFormed);
+    CHECK (mei.find ("<tabGrp") != std::string::npos);
+    CHECK (mei.find ("tab.course=") != std::string::npos);
+
+    size_t dynams = 0, slurs = 0, at = 0;
+
+    while ((at = mei.find ("<dynam ", at)) != std::string::npos) { ++dynams; ++at; }
+    at = 0;
+    while ((at = mei.find ("<slur ", at)) != std::string::npos) { ++slurs; ++at; }
+
+    CHECK_EQ ((int) dynams, 1);
+    CHECK_EQ ((int) slurs, 1);
+    CHECK (mei.find (">riff</dir>") != std::string::npos);
+}
+REGISTER (testFrettedMarksKeyAndMei, "edit: guitar marks, key and MEI");
+
+// Random edits on guitar and bass takes, started in the notation and in the tab: both staves stay the same music,
+// every state undoes and redoes exactly.
+static void testRandomFrettedEdits()
+{
+    std::mt19937 rng (11);
+    int applied = 0, refused = 0, strings = 0;
+
+    for (int take = 0; take < 30; ++take)
+    {
+        const bool bass = take % 3 == 2;
+        std::vector<N> notes;
+        const int count = 6 + (int) (rng() % 16);
+
+        for (int i = 0; i < count; ++i)
+        {
+            const double start = (double) (rng() % 40) * 0.25;
+            const double dur = 0.25 * (double) (1 + rng() % 6);
+            notes.push_back ({ bass ? 28 + (int) (rng() % 30) : 40 + (int) (rng() % 40), start, dur });
+        }
+
+        Session s (fretted (notes, 12.0, bass ? InstrumentType::bass : InstrumentType::guitar));
+        CHECK_STR (problems (s.score).c_str(), "");
+        CHECK_STR (tabProblems (s.score).c_str(), "");
+        const Score start = s.score;
+        std::vector<Score> history { start };
+
+        for (int step = 0; step < 50; ++step)
+        {
+            const auto all = events (s.score, 1 + (int) (rng() % 2));
+            const auto* target = all[rng() % all.size()];
+            std::string id = target->id;
+
+            if (target->type == nodeType::chord && rng() % 2 == 0)
+                id = target->children[rng() % target->children.size()].id;
+
+            Json j = Json::object();
+            const auto kind = rng() % 18;
+
+            switch (kind)
+            {
+                case 0: case 1: j = req ("pitch", id, "semitones", (int) (rng() % 5) - 2); break;
+                case 2: j = req ("pitch", id, "semitones", rng() % 2 == 0 ? 12 : -12); break;
+                case 3: j = req ("duration", id, "dur", 1 << (rng() % 6)); j.set ("dots", (int) (rng() % 2)); break;
+                case 4: j = req ("delete", id); break;
+                case 5: j = req ("letter", id); j.set ("letter", std::string (1, "ABCDEFG"[rng() % 7])); break;
+                case 6: j = req ("interval", id, "interval", 2 + (int) (rng() % 7)); break;
+                case 7: j = req ("tie", id); break;
+                case 8: j = req ("respell", id); break;
+                case 9: j = req ("beam", id); j.set ("mode", std::string (rng() % 3 == 0 ? "break" : rng() % 2 == 0 ? "join" : "auto")); break;
+                case 10: j = req ("voice", id, "voice", 2); break;
+                case 11: j = Json::object(); j.set ("op", "key"); j.set ("fifths", (int) (rng() % 15) - 7); j.set ("minor", rng() % 2 == 0); break;
+                case 12: j = req ("dynamic", id); j.set ("value", std::string (rng() % 2 == 0 ? "mf" : "pp")); break;
+                case 13: j = req ("slur", id, "count", 1 + (int) (rng() % 3)); break;
+                case 14: j = req ("break", id); j.set ("mode", std::string (rng() % 2 == 0 ? "system" : "none")); break;
+                default: j = stringReq (id, rng() % 2 == 0 ? "up" : "down"); ++strings; break;
+            }
+
+            const Score before = s.score;
+            const auto result = performEdit (s.score, s.undo, j);
+
+            if (result.ok)
+            {
+                ++applied;
+                history.push_back (s.score);
+                CHECK (! (s.score == before));
+            }
+            else
+            {
+                ++refused;
+                CHECK (s.score == before);
+            }
+
+            const auto issue = problems (s.score) + tabProblems (s.score);
+
+            if (! issue.empty())
+                std::printf ("    take %d step %d: %s after %s\n", take, step, issue.c_str(), j.dump().c_str());
+
+            CHECK_STR (issue.c_str(), "");
+        }
+
+        for (size_t i = history.size() - 1; i > 0; --i)
+        {
+            CHECK (s.score == history[i]);
+            CHECK (s.undo.undo());
+        }
+
+        CHECK (s.score == start);
+
+        for (size_t i = 1; i < history.size(); ++i)
+        {
+            CHECK (s.undo.redo());
+            CHECK (s.score == history[i]);
+        }
+    }
+
+    CHECK (applied > 200);
+    CHECK (refused > 20);
+    CHECK (strings > 20);
+}
+REGISTER (testRandomFrettedEdits, "edit: random guitar and bass edits keep the tab right and undo exactly");
 
 //==============================================================================
 // Phase 7b: spelling and layout.
@@ -1361,4 +1782,85 @@ static void testLayoutClip()
     CHECK (problems (s.score).empty());
 }
 REGISTER (testLayoutClip, "edit: the layout practice clip of the 7b test sheet");
+#endif
+
+#ifdef TRANSCRIBER_FIXTURES_DIR
+// The guitar and bass clips of the 7e test sheet: the same steps as written there.
+static void testFrettedClips()
+{
+    const auto file = midireader::read (std::string (TRANSCRIBER_FIXTURES_DIR) + "/t44-edit-guitar.mid");
+    CHECK (file.ok);
+    Session s (transcribeFretted (file.capture, {}, InstrumentType::guitar).score);
+    CHECK_STR (tabLine (s.score).c_str(), "6:0 5:0 4:0 3:0 [5:0 4:2] 2:0 2:1 4:2 3:0 3:2 2:0 3:2 3:0 4:2 4:0");
+
+    // 1: the lowest note cannot go lower; a half step up is fret 1
+    CHECK (! s.run (req ("pitch", idOf (s.score, 0), "semitones", -1)).ok);
+    CHECK (s.run (req ("pitch", idOf (s.score, 0), "semitones", 1)).ok);
+    CHECK (startsWith (tabLine (s.score), "6:1 5:0"));
+    CHECK (s.undo.undo());
+
+    // 2: a click in the tab: the A string note up a half step, and the tab note stays selected
+    const auto tabClick = idOf (s.score, 1, 2);
+    const auto up = s.run (req ("pitch", tabClick, "semitones", 1));
+    CHECK (up.ok);
+    CHECK (startsWith (tabLine (s.score), "6:0 5:1 4:0"));
+    CHECK_STR (up.select.c_str(), idOf (s.score, 1, 2).c_str());
+    CHECK (s.undo.undo());
+
+    // 3: the same note on the low E string, and back
+    CHECK (s.run (stringReq (idOf (s.score, 1, 2), "down")).ok);
+    CHECK (startsWith (tabLine (s.score), "6:0 6:5 4:0"));
+    CHECK (s.run (stringReq (idOf (s.score, 1, 2), "up")).ok);
+    CHECK (startsWith (tabLine (s.score), "6:0 5:0 4:0"));
+
+    // 4: the chord of bar 2: the chord itself is refused, its low note moves
+    const auto chord = events (s.score, 2)[4]->id;
+    const auto low = events (s.score, 2)[4]->children[0].id;
+    CHECK (! s.run (stringReq (chord, "down")).ok);
+    CHECK (s.run (stringReq (low, "down")).ok);
+    CHECK (tabLine (s.score).find ("[6:5 4:2]") != std::string::npos);
+
+    // 5: a third above the B3 makes a chord that can be played
+    auto third = req ("interval", idOf (s.score, 5));
+    third.set ("interval", 3);
+    CHECK (s.run (third).ok);
+    CHECK (events (s.score, 2)[5]->type == nodeType::chord);
+    CHECK_STR (tabProblems (s.score).c_str(), "");
+
+    // 6: a note of bar 3 becomes a rest in both staves
+    CHECK (s.run (req ("delete", idOf (s.score, 7))).ok);
+    CHECK (right (s.score).find ("r/8") != std::string::npos);
+    CHECK (tabLine (s.score).find (" r ") != std::string::npos);
+
+    // 7: a dynamic on a click in the tab: once in the MEI, on the notation staff
+    auto dyn = req ("dynamic", idOf (s.score, 2, 2));
+    dyn.set ("value", "mf");
+    CHECK (s.run (dyn).ok);
+    const auto mei = scoreToMei (s.score, {});
+    CHECK (mei.find ("<dynam ") != std::string::npos);
+
+    // 8: one voice only; a new key leaves the tab as it is
+    CHECK (! s.run (req ("voice", idOf (s.score, 0), "voice", 2)).ok);
+    const auto tabNow = tabLine (s.score);
+    Json key = Json::object();
+    key.set ("op", "key");
+    key.set ("fifths", -2);
+    key.set ("minor", false);
+    CHECK (s.run (key).ok);
+    CHECK_STR (tabLine (s.score).c_str(), tabNow.c_str());
+    CHECK_STR (tabProblems (s.score).c_str(), "");
+    CHECK_STR (problems (s.score).c_str(), "");
+
+    // the bass clip
+    const auto bassFile = midireader::read (std::string (TRANSCRIBER_FIXTURES_DIR) + "/t45-edit-bass.mid");
+    CHECK (bassFile.ok);
+    Session b (transcribeFretted (bassFile.capture, {}, InstrumentType::bass).score);
+    CHECK_STR (tabLine (b.score).c_str(), "4:0 3:0 2:0 1:0 4:0 4:3 3:0 4:0 4:0 4:3 3:0 3:2 3:0 4:3 4:0");
+    CHECK (! b.run (req ("pitch", idOf (b.score, 0), "semitones", -1)).ok);
+    CHECK (b.run (req ("pitch", idOf (b.score, 3), "semitones", 2)).ok);                // G2 up a whole step
+    CHECK_STR (tabProblems (b.score).c_str(), "");
+    CHECK (b.run (stringReq (idOf (b.score, 1, 2), "down")).ok);                        // A1 on the E string, fret 5
+    CHECK (startsWith (tabLine (b.score), "4:0 4:5"));
+}
+REGISTER (testFrettedClips, "edit: the guitar and bass clips of the Live test sheet");
 #endif

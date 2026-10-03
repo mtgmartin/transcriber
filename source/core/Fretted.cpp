@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <functional>
 #include <limits>
 #include <map>
 
@@ -25,7 +26,7 @@ namespace
 
     // All the ways to play a chord (its notes sorted from high to low) on distinct strings within a
     // hand span, cheapest first.
-    std::vector<Candidate> candidatesFor (const std::vector<int>& pitches, const std::vector<int>& open)
+    std::vector<Candidate> candidatesFor (const std::vector<int>& pitches, const std::vector<int>& open, const std::vector<TabNote>* keep = nullptr)
     {
         std::vector<Candidate> out;
         std::vector<TabNote> current;
@@ -65,11 +66,19 @@ namespace
                 return;
             }
 
+            // a note that is to stay where it is has only that string
+            int only = -1;
+
+            if (keep != nullptr)
+                for (const auto& k : *keep)
+                    if (k.pitch == pitches[i])
+                        only = k.string;
+
             for (size_t s = 0; s < open.size(); ++s)
             {
                 const auto fret = pitches[i] - open[s];
 
-                if (used[s] || fret < 0 || fret > maxFret)
+                if (used[s] || fret < 0 || fret > maxFret || (only >= 0 && (int) s != only))
                     continue;
 
                 used[s] = true;
@@ -228,6 +237,45 @@ std::vector<std::vector<TabNote>> assignTab (const std::vector<std::vector<int>>
     }
 
     return result;
+}
+
+std::vector<TabNote> placeChord (std::vector<int> pitches, const std::vector<TabNote>& keep, const std::vector<int>& open, double reference)
+{
+    if (open.empty() || pitches.empty())
+        return {};
+
+    std::sort (pitches.begin(), pitches.end(), std::greater<int>());
+    pitches.erase (std::unique (pitches.begin(), pitches.end()), pitches.end());
+
+    auto candidates = candidatesFor (pitches, open, keep.empty() ? nullptr : &keep);
+
+    if (candidates.empty() && ! keep.empty())
+        candidates = candidatesFor (pitches, open);   // the notes that stayed cannot stay: place them again
+
+    if (candidates.empty())
+        return {};
+
+    // the cheapest way, counting how far the hand has to move from where it was
+    size_t best = 0;
+    double bestCost = 1e9;
+
+    for (size_t i = 0; i < candidates.size(); ++i)
+    {
+        double cost = candidates[i].own;
+
+        if (reference >= 0.0 && candidates[i].position >= 0.0)
+            cost += 0.6 * std::abs (candidates[i].position - reference);
+
+        if (cost < bestCost)
+        {
+            bestCost = cost;
+            best = i;
+        }
+    }
+
+    auto notes = candidates[best].notes;
+    std::sort (notes.begin(), notes.end(), [] (const TabNote& a, const TabNote& b) { return a.pitch < b.pitch; });
+    return notes;
 }
 
 //==============================================================================

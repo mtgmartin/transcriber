@@ -218,6 +218,10 @@ struct TabNote
 // (out of range, or more than there are strings, or no way to play them together).
 std::vector<std::vector<TabNote>> assignTab (const std::vector<std::vector<int>>& chords, const std::vector<int>& openStrings);
 
+// Where the notes of one chord are played (low to high), for an edit: notes in `keep` stay on their strings if the rest
+// can be played with them, the hand is kept near `reference` (a fret, or -1). Empty if the chord cannot be played.
+std::vector<TabNote> placeChord (std::vector<int> pitches, const std::vector<TabNote>& keep, const std::vector<int>& openStrings, double reference);
+
 // Guitar or bass: standard notation (one voice, chords allowed) and a tablature staff under it.
 TranscriptionResult transcribeFretted (const ResolvedCapture&, const TranscriptionSettings&, InstrumentType);
 

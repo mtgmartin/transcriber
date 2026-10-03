@@ -422,7 +422,16 @@ Full results are in `docs/phase1-results.md`.
 - Tests: `test_edit.cpp` (breaks, measures per line, spacing; the random edit test draws them too). Fixture `t43-edit-pages` (24 bars). Test sheet `docs/phase7d-tests.md`.
 - Not in 7d: page size and margins, staff size (they belong to the PDF export, Phase 8), breaks in guitar/bass/drum scores.
 
-Built in four parts:
+**Part 7e (build 0.11.0, 135 core tests with the fixtures): guitar and bass scores.**
+- Idea: the standard staff of a guitar or bass score is edited with the same operations as piano; the tab staff is rebuilt from it after every edit (`syncTab` in `Edit.cpp`, called from `finish`). A click in the tab is turned into the matching note of the standard staff (`notationIdOf`: same measure, voice, event and chord position), and the answer selects the tab note again (`tabIdOf`).
+- Tab ids: after the first edit every tab node has the id of its notation node plus `-t` (so ids stay stable and unique; `Score` demands unique ids score-wide).
+- Strings and frets: `syncTab` reads where every note was played before (old tab staff, matched by position to the old notation staff), keeps a note on its string if its pitch did not change, and places new or changed notes with `placeChord` (new in `Fretted.cpp`/`Notation.h`: the chord candidates of `assignTab` limited to the notes that stay, cost = own cost + 0.6 x distance of the hand from the last chord). A chord that cannot be played at all (outside the strings or 22 frets, no distinct strings) makes the whole edit refused ("That note cannot be played on a guitar ..."). Marks and spelling stay on the notation staff (the tab events carry no `stem`, `dyn`, `artic`, `text`, `step`, `accid` ...).
+- New operation `string` (id of a tab note, dir up/down): the same pitch on the next higher/lower string (own undo step, tab only; refused for a chord as a whole, an occupied string, or a fret outside 0-22). Such a manual choice survives other edits. Page: "Tab string" buttons in the second edit row.
+- `changeKey` skips tab staves; `voice` is refused ("A guitar or bass score has one voice."); `referencePitch` knows the G8/F8 clefs; `editBlocker` now only refuses drum scores.
+- Tests: `test_edit.cpp` (apply/undo of pitch, interval, delete, duration, string moves, chords, marks, key, MEI; `tabProblems` checks that the tab always mirrors the notation: same events, same pitches, playable distinct strings, no notation properties; 30 random guitar/bass takes x 50 random edits from either staff; the clips `t44-edit-guitar` and `t45-edit-bass` as in `docs/phase7e-tests.md`).
+- Not in 7e: drums (7f), alternative tunings, capo, moving a whole chord to another position by hand, fingerings and techniques (bends, slides).
+
+Built in parts:
 
 | Part | Scope |
 |---|---|
@@ -430,6 +439,8 @@ Built in four parts:
 | 7b | Spelling & layout |
 | 7c | Markings & text |
 | 7d | Page layout |
+| 7e | Guitar and bass |
+| 7f | Drums |
 
 - Each part ships as its own build.
 - Every operation gets a unit test (apply, then undo, gives back the original) plus a check in Live.
@@ -513,6 +524,6 @@ Tools in `tools/live/`. Copy them to the scratchpad or run them in place.
 
 ## 9. Status (update every session)
 
-- **Done:** Phases 0-6 with their Live tests (6: `docs/phase6-results.md`). Phase 7d (page layout, build 0.10.0, 129 core tests) passed in Live except for lines between two breaks being squeezed (`docs/phase7d-results.md`); the fix is in 0.10.1 and was confirmed in Live. Phase 7a (0.7.1), 7b (0.8.0) and 7c (0.9.0; `docs/phase7c-results.md`) passed in Live; 0.9.1 has two small dialog fixes (`docs/phase7a-results.md`): editing notes and rhythms of piano scores.
-- **Waiting on the user:** (1) the reference clips: about 10 clips exported from Live (.mid) with the notation you expect; (2) your own guitar riffs and basslines to confirm the tab (Phase 6 gate).
-- **Next:** editing for guitar, bass and drums (the second staff mirrors the first), then Phase 8 (PDF export).
+- **Done:** Phases 0-6 with their Live tests (6: `docs/phase6-results.md`). Phase 7e code (guitar and bass editing, build 0.11.0, 135 core tests): its Live check is next (`docs/phase7e-tests.md`). Phase 7d (page layout, build 0.10.0, 129 core tests) passed in Live except for lines between two breaks being squeezed (`docs/phase7d-results.md`); the fix is in 0.10.1 and was confirmed in Live. Phase 7a (0.7.1), 7b (0.8.0) and 7c (0.9.0; `docs/phase7c-results.md`) passed in Live; 0.9.1 has two small dialog fixes (`docs/phase7a-results.md`): editing notes and rhythms of piano scores.
+- **Waiting on the user:** (1) install 0.11.0 (admin PowerShell, Live closed, `scriptsinstall.ps1`, only after CI is green) so that I can run `docs/phase7e-tests.md`; (2) the reference clips: about 10 clips exported from Live (.mid) with the notation you expect; (3) your own guitar riffs and basslines to confirm the tab (Phase 6 gate).
+- **Next:** the 7e Live check, then editing for drums (7f), then Phase 8 (PDF export).

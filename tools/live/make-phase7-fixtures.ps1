@@ -45,3 +45,27 @@ for ($beat = 0; $beat -lt 96; $beat++) { $r += , @($scale[$beat % 16], [double]$
 for ($half = 0; $half -lt 48; $half++) { $r += , @($(if ($half % 2 -eq 0) { 48 } else { 43 }), ($half * 2.0), 2.0, 80) }
 Write-MidiFile (Join-Path $out "t43-edit-pages.mid") $r 96.0
 if (Test-Path $live) { Copy-Item (Join-Path $out "t43-edit-pages.mid") -Destination $live -Force }
+
+# t44-edit-guitar (Phase 7e): 3 bars of 4/4 for a guitar.
+#  bar 1: the open strings E2 A2 D3 G3 (quarters)
+#  bar 2: A2 + E3 as a chord (half), B3 and C4 (quarters)
+#  bar 3: eighths E3 G3 A3 B3 A3 G3 E3 D3
+$g = @(
+  @(40, 0.0, 1.0, 95), @(45, 1.0, 1.0, 95), @(50, 2.0, 1.0, 95), @(55, 3.0, 1.0, 95),
+  @(45, 4.0, 2.0, 100), @(52, 4.0, 2.0, 100), @(59, 6.0, 1.0, 95), @(60, 7.0, 1.0, 95)
+)
+$riff = @(52, 55, 57, 59, 57, 55, 52, 50)
+for ($i = 0; $i -lt 8; $i++) { $g += , @($riff[$i], (8.0 + $i * 0.5), 0.5, 95) }
+Write-MidiFile (Join-Path $out "t44-edit-guitar.mid") $g 12.0
+if (Test-Path $live) { Copy-Item (Join-Path $out "t44-edit-guitar.mid") -Destination $live -Force }
+
+# t45-edit-bass (Phase 7e): 3 bars of 4/4 for a bass.
+#  bar 1: the open strings E1 A1 D2 G2 (quarters); bar 2: E1 half, G1, A1 quarters; bar 3: eighths E1 E1 G1 A1 B1 A1 G1 E1
+$b = @(
+  @(28, 0.0, 1.0, 95), @(33, 1.0, 1.0, 95), @(38, 2.0, 1.0, 95), @(43, 3.0, 1.0, 95),
+  @(28, 4.0, 2.0, 100), @(31, 6.0, 1.0, 95), @(33, 7.0, 1.0, 95)
+)
+$line = @(28, 28, 31, 33, 35, 33, 31, 28)
+for ($i = 0; $i -lt 8; $i++) { $b += , @($line[$i], (8.0 + $i * 0.5), 0.5, 95) }
+Write-MidiFile (Join-Path $out "t45-edit-bass.mid") $b 12.0
+if (Test-Path $live) { Copy-Item (Join-Path $out "t45-edit-bass.mid") -Destination $live -Force }

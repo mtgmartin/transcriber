@@ -1,5 +1,7 @@
 #include "Edit.h"
 
+#include "Instruments.h"
+#include "Notation.h"
 #include "TranscribeInternal.h"
 
 #include <algorithm>
@@ -481,10 +483,103 @@ namespace
         return r;
     }
 
+    //==========================================================================
+    // Guitar and bass: the notation staff is edited, the tab staff under it follows.
+
+    bool isTabStaff (const Node& staff)
+    {
+        return staff.prop ("kind").asString() == "tab" || staff.prop ("clef").asString() == "TAB";
+    }
+
+    const Node* tabStaffOf (const Node& part)
+    {
+        for (const auto& s : part.children)
+            if (isTabStaff (s))
+                return &s;
+
+        return nullptr;
+    }
+
+    const Node* notationStaffOf (const Node& part)
+    {
+        for (const auto& s : part.children)
+            if (! isTabStaff (s))
+                return &s;
+
+        return nullptr;
+    }
+
+    // The tab note, chord or rest that belongs to a notation one.
+    std::string tabIdOf (const std::string& id)
+    {
+        return id + "-t";
+    }
+
+    // The id of the notation note, chord or rest that a note, chord or rest of the tab stands for; the id itself if
+    // it is not in a tab staff (or has no partner).
+    std::string notationIdOf (const Score& score, const std::string& id)
+    {
+        const auto* node = score.find (id);
+
+        if (node == nullptr)
+            return id;
+
+        std::vector<size_t> path;   // the index in the parent, going up to the measure in its staff
+        const Node* staff = nullptr;
+        std::string current = id;
+
+        for (;;)
+        {
+            size_t index = 0;
+            const auto* parent = score.findParent (current, &index);
+
+            if (parent == nullptr)
+                return id;
+
+            path.push_back (index);
+
+            if (parent->type == nodeType::staff)
+            {
+                staff = parent;
+                break;
+            }
+
+            current = parent->id;
+        }
+
+        if (! isTabStaff (*staff))
+            return id;
+
+        const auto* part = score.findParent (staff->id);
+        const auto* notation = part != nullptr ? notationStaffOf (*part) : nullptr;
+
+        if (notation == nullptr)
+            return id;
+
+        const Node* at = notation;
+
+        for (size_t k = path.size(); k-- > 0;)
+        {
+            if (path[k] >= at->children.size())
+                return id;
+
+            at = &at->children[path[k]];
+        }
+
+        return at->type == node->type ? at->id : id;
+    }
+
+    std::vector<int> openStringsOf (const Node& tabStaff)
+    {
+        return openStrings (tabStaff.prop ("strings").asInt (6) == 4 ? InstrumentType::bass : InstrumentType::guitar);
+    }
+
     // The staff, measure, voice and event an edit works on, with a copy of the measures to change.
     struct Edit
     {
         Score& score;
+        const Node* part = nullptr;
+        const Node* tab = nullptr;        // the tab staff of a guitar or bass score
         const Node* staff = nullptr;
         std::vector<Node> measures;       // copies of the measures of the staff
         size_t mi = 0, li = 0, ei = 0;    // measure, layer, event
@@ -542,9 +637,11 @@ namespace
         size_t measureIndex = 0;
         const auto* staff = measure != nullptr ? e.score.findParent (measure->id, &measureIndex) : nullptr;
 
-        if (staff == nullptr || staff->type != nodeType::staff)
+        if (staff == nullptr || staff->type != nodeType::staff || isTabStaff (*staff))
             return false;
 
+        e.part = e.score.findParent (staff->id);
+        e.tab = e.part != nullptr ? tabStaffOf (*e.part) : nullptr;
         e.staff = staff;
         e.measures = staff->children;
         e.mi = measureIndex;
@@ -587,7 +684,8 @@ namespace
             }
         }
 
-        return e.staff->prop ("clef").asString() == "F" ? 48 : 64;
+        const auto clef = e.staff->prop ("clef").asString();
+        return clef == "F" ? 48 : clef == "F8" ? 38 : clef == "G8" ? 55 : 64;
     }
 
     // The pitch of a letter nearest to a reference pitch.
@@ -1676,6 +1774,259 @@ namespace
         return any ? success ("Spacing changed.") : fail ("The spacing is that already.");
     }
 
+    // After an edit of the notation staff of a guitar or bass score: the tab staff gets the same events with strings
+    // and frets. A note that stays as it was stays on its string; a new or changed note is placed near the hand.
+    bool syncTab (Edit& e, std::vector<ReplaceChildrenCommand::Change>& changes, std::string& problem)
+    {
+        const auto open = openStringsOf (*e.tab);
+        const int strings = (int) open.size();
+        const std::string instrument = strings == 4 ? "bass" : "guitar";
+
+        if (e.tab->children.size() != e.measures.size() || e.staff->children.size() != e.measures.size())
+        {
+            problem = "The tab does not fit the notation.";
+            return false;
+        }
+
+        auto notesOfEvent = [] (const Node& event)
+        {
+            std::vector<const Node*> notes;
+
+            if (event.type == nodeType::note)
+                notes.push_back (&event);
+            else if (event.type == nodeType::chord)
+                for (const auto& n : event.children)
+                    notes.push_back (&n);
+
+            return notes;
+        };
+
+        // where every notation note was played before the edit (read from the old tab, by position)
+        std::map<std::string, TabNote> before;
+
+        for (size_t i = 0; i < e.tab->children.size(); ++i)
+        {
+            const auto& tm = e.tab->children[i];
+            const auto& sm = e.staff->children[i];
+            std::vector<const Node*> tl, sl;
+
+            for (const auto& c : tm.children) if (c.type == nodeType::layer) tl.push_back (&c);
+            for (const auto& c : sm.children) if (c.type == nodeType::layer) sl.push_back (&c);
+
+            for (size_t l = 0; l < std::min (tl.size(), sl.size()); ++l)
+            {
+                if (tl[l]->children.size() != sl[l]->children.size())
+                    continue;
+
+                for (size_t k = 0; k < tl[l]->children.size(); ++k)
+                {
+                    const auto tn = notesOfEvent (tl[l]->children[k]);
+                    const auto sn = notesOfEvent (sl[l]->children[k]);
+
+                    if (tn.size() != sn.size())
+                        continue;
+
+                    for (size_t j = 0; j < tn.size(); ++j)
+                    {
+                        TabNote old;
+                        old.pitch = (int) tn[j]->prop ("pitch").asInt();
+                        old.string = strings - (int) tn[j]->prop ("course").asInt();
+                        old.fret = (int) tn[j]->prop ("fret").asInt();
+                        before[sn[j]->id] = old;
+                    }
+                }
+            }
+        }
+
+        static const char* const decorations[] = { "stem", "dyn", "artic", "fermata", "text", "textPlace", "beamBreak", "beamJoin",
+                                                   "accid", "step", "alter", "oct", "offGrid" };
+
+        auto strip = [] (Node& n)
+        {
+            for (const auto* key : decorations)
+                n.props.erase (key);
+
+            n.id += "-t";
+        };
+
+        double reference = -1.0;   // where the hand is: the middle of the fretted notes of the last chord
+
+        for (size_t i = 0; i < e.measures.size(); ++i)
+        {
+            Node tm = e.tab->children[i];
+            tm.children.clear();
+
+            for (const auto& layer : e.measures[i].children)
+            {
+                if (layer.type != nodeType::layer)
+                    continue;
+
+                Node tl;
+                tl.type = nodeType::layer;
+                tl.id = layer.id + "-t";
+                tl.props = layer.props;
+
+                for (const auto& event : layer.children)
+                {
+                    Node t = event;
+                    strip (t);
+
+                    if (event.type == nodeType::rest)
+                    {
+                        tl.children.push_back (std::move (t));
+                        continue;
+                    }
+
+                    const auto notes = notesOfEvent (event);
+                    std::vector<int> pitches;
+                    std::vector<TabNote> keep;
+
+                    for (const auto* n : notes)
+                    {
+                        const auto pitch = midiOf (*n);
+                        pitches.push_back (pitch);
+                        const auto old = before.find (n->id);
+
+                        if (old != before.end() && old->second.pitch == pitch && old->second.string >= 0 && old->second.string < strings
+                            && old->second.fret == pitch - open[(size_t) old->second.string])
+                            keep.push_back (old->second);
+                    }
+
+                    std::vector<TabNote> placed = keep.size() == notes.size() ? keep : placeChord (pitches, keep, open, reference);
+
+                    if (placed.size() != notes.size())
+                    {
+                        problem = std::string (notes.size() == 1 ? "That note" : "Those notes") + " cannot be played on a " + instrument
+                                  + " (out of its range, or not possible together with the other notes).";
+                        return false;
+                    }
+
+                    auto place = [&] (Node& note)
+                    {
+                        const auto pitch = midiOf (note);
+
+                        for (const auto& p : placed)
+                        {
+                            if (p.pitch == pitch)
+                            {
+                                note.props["course"] = Json (strings - p.string);
+                                note.props["fret"] = Json (p.fret);
+                            }
+                        }
+                    };
+
+                    if (t.type == nodeType::note)
+                    {
+                        place (t);
+                    }
+                    else
+                    {
+                        for (auto& n : t.children)
+                        {
+                            strip (n);
+                            place (n);
+                        }
+                    }
+
+                    double low = 1000, high = -1;
+
+                    for (const auto& p : placed)
+                    {
+                        if (p.fret > 0)
+                        {
+                            low = std::min (low, (double) p.fret);
+                            high = std::max (high, (double) p.fret);
+                        }
+                    }
+
+                    if (high >= 0)
+                        reference = (low + high) / 2.0;
+
+                    tl.children.push_back (std::move (t));
+                }
+
+                tm.children.push_back (std::move (tl));
+            }
+
+            if (! sameNodes (tm.children, e.tab->children[i].children))
+                changes.push_back ({ tm.id, tm.children });
+        }
+
+        return true;
+    }
+
+    // Moves a note of the tab to the next string up or down: the same pitch, another fret. The notation does not change.
+    EditResult moveString (Score& score, UndoManager& undo, const std::string& id, const std::string& direction)
+    {
+        const auto* node = score.find (id);
+
+        if (node == nullptr)
+            return fail ("Click a note in the tab first.");
+
+        if (node->type == nodeType::chord)
+            return fail ("Click one note of the chord (click it again) to move it to another string.");
+
+        if (node->type != nodeType::note)
+            return fail ("Click a note in the tab first.");
+
+        const auto* parent = score.findParent (id);
+        const bool inChord = parent != nullptr && parent->type == nodeType::chord;
+        const auto* layer = parent != nullptr ? (inChord ? score.findParent (parent->id) : parent) : nullptr;
+        const auto* measure = layer != nullptr ? score.findParent (layer->id) : nullptr;
+        const auto* staff = measure != nullptr ? score.findParent (measure->id) : nullptr;
+
+        if (staff == nullptr || staff->type != nodeType::staff || ! isTabStaff (*staff))
+            return fail ("Click a note in the tab staff first (the notes of the staff above do not have a string).");
+
+        const auto open = openStringsOf (*staff);
+        const int strings = (int) open.size();
+        const int current = strings - (int) node->prop ("course").asInt();
+        const int target = direction == "up" ? current + 1 : current - 1;
+
+        if (target < 0 || target >= strings)
+            return fail (direction == "up" ? "There is no higher string." : "There is no lower string.");
+
+        const int pitch = (int) node->prop ("pitch").asInt();
+        const int fret = pitch - open[(size_t) target];
+
+        if (fret < 0 || fret > 22)
+            return fail ("That note cannot be played on that string (it would be fret " + std::to_string (fret) + ").");
+
+        if (inChord)
+            for (const auto& other : parent->children)
+                if (other.id != id && strings - (int) other.prop ("course").asInt() == target)
+                    return fail ("Another note of the chord is on that string.");
+
+        Node changed = *measure;
+
+        for (auto& l : changed.children)
+        {
+            for (auto& event : l.children)
+            {
+                auto fix = [&] (Node& note)
+                {
+                    note.props["course"] = Json (strings - target);
+                    note.props["fret"] = Json (fret);
+                };
+
+                if (event.id == id)
+                    fix (event);
+
+                for (auto& n : event.children)
+                    if (n.id == id)
+                        fix (n);
+            }
+        }
+
+        std::vector<ReplaceChildrenCommand::Change> changes;
+        changes.push_back ({ changed.id, changed.children });
+
+        if (! undo.perform (std::make_unique<ReplaceChildrenCommand> (std::move (changes), "Move to another string")))
+            return fail ("The change did not fit the score.");
+
+        return success ("On string " + std::to_string (strings - target) + ", fret " + std::to_string (fret) + ".", id);
+    }
+
     EditResult finish (Edit& e, UndoManager& undo, const std::string& name, EditResult result)
     {
         if (! result.ok)
@@ -1703,6 +2054,14 @@ namespace
         if (changes.empty())
             return fail ("Nothing changed.");
 
+        if (e.tab != nullptr)
+        {
+            std::string problem;
+
+            if (! syncTab (e, changes, problem))
+                return fail (problem);
+        }
+
         if (! undo.perform (std::make_unique<ReplaceChildrenCommand> (std::move (changes), name)))
             return fail ("The change did not fit the score.");
 
@@ -1725,6 +2084,9 @@ namespace
 
         for (const auto& staff : part->children)
         {
+            if (isTabStaff (staff))
+                continue;   // the tab has no spelling
+
             auto measures = staff.children;
 
             for (size_t i = 0; i < measures.size(); ++i)
@@ -1799,14 +2161,55 @@ std::string editBlocker
         return "There is no score to edit.";
 
     for (const auto& staff : part->children)
-        if (staff.prop ("kind").asString() == "tab" || staff.prop ("kind").asString() == "perc"
-            || staff.prop ("clef").asString() == "TAB" || staff.prop ("clef").asString() == "perc")
-            return "Editing is for piano scores for now. Guitar, bass and drum scores come later.";
+        if (staff.prop ("kind").asString() == "perc" || staff.prop ("clef").asString() == "perc")
+            return "Editing is for piano, guitar and bass scores for now. Drum scores come later.";
 
     return {};
 }
 
+namespace
+{
+    EditResult performOn (Score& score, UndoManager& undo, const Json& request);
+}
+
 EditResult performEdit (Score& score, UndoManager& undo, const Json& request)
+{
+    // moving a note of the tab to another string works on the tab itself
+    if (request.get ("op").asString() == "string")
+    {
+        if (const auto blocked = editBlocker (score); ! blocked.empty())
+            return fail (blocked);
+
+        return moveString (score, undo, request.get ("id").asString(), request.get ("dir").asString());
+    }
+
+    // A click in the tab of a guitar or bass score edits the note of the notation it stands for; the answer then
+    // selects the tab note again.
+    const auto id = request.get ("id").asString();
+    const auto notation = id.empty() ? id : notationIdOf (score, id);
+
+    if (notation == id)
+        return performOn (score, undo, request);
+
+    auto changed = request;
+    changed.set ("id", notation);
+    auto result = performOn (score, undo, changed);
+
+    // (an answer that keeps the selection keeps the tab note, whose id the edit may have renewed)
+    if (result.ok)
+    {
+        const auto wanted = tabIdOf (result.select.empty() ? notation : result.select);
+
+        if (score.find (wanted) != nullptr)
+            result.select = wanted;
+    }
+
+    return result;
+}
+
+namespace
+{
+EditResult performOn (Score& score, UndoManager& undo, const Json& request)
 {
     const auto& op = request.get ("op").asString();
 
@@ -1842,6 +2245,9 @@ EditResult performEdit (Score& score, UndoManager& undo, const Json& request)
 
     if (! locate (e, request.get ("id").asString()))
         return fail ("Select a note or a rest first.");
+
+    if (op == "voice" && e.tab != nullptr)
+        return fail ("A guitar or bass score has one voice.");
 
     if (op == "pitch")
         return finish (e, undo, "Change pitch", changePitch (e, (int) request.get ("semitones").asInt()));
@@ -1899,5 +2305,6 @@ EditResult performEdit (Score& score, UndoManager& undo, const Json& request)
 
     return fail ("Unknown edit \"" + op + "\".");
 }
+}  // namespace
 
 }  // namespace trs
