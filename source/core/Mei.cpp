@@ -434,12 +434,22 @@ namespace
                 attribute (s, "dots", std::to_string (e.prop ("dots").asInt()));
         }
 
+        // a grace note: with a slash ("acc", MEI's unaccented grace note) or without ("app", the accented one)
+        static void graceAttribute (std::string& s, const Node& e)
+        {
+            if (e.has ("grace"))
+                attribute (s, "grace", e.prop ("grace").asString() == "app" ? "acc" : "unacc");
+        }
+
         std::string noteElement (const Node& n, bool withDuration, const Node* durationSource, const std::string& idOwner)
         {
             std::string s = "<note xml:id=\"" + xmlEscape (idOwner.empty() ? n.id : idOwner) + "\"";
 
             if (withDuration && durationSource != nullptr)
+            {
                 durationAttributes (s, *durationSource);
+                graceAttribute (s, *durationSource);
+            }
 
             if (kind == "perc")
             {
@@ -527,6 +537,9 @@ namespace
 
             if (kind == "tab")
             {
+                if (e.has ("grace"))
+                    return;   // Verovio cannot draw a grace note in a tablature
+
                 std::string s = "<tabGrp";
 
                 // a group of several notes carries the id of the chord; a single note keeps its own id
@@ -550,6 +563,7 @@ namespace
             {
                 std::string s = "<chord xml:id=\"" + xmlEscape (e.id) + "\"";
                 durationAttributes (s, e);
+                graceAttribute (s, e);
 
                 if (kind == "perc")
                     attribute (s, "stem.dir", layerNumber == 1 ? "up" : "down");
@@ -731,6 +745,10 @@ std::string describeNode (const Score& score, const std::string& id)
 
     if (! event->prop ("tuplet").asString().empty())
         value += " triplet";
+
+    // a grace note has no length of its own: it is named by its kind
+    if (event->has ("grace"))
+        value = event->prop ("grace").asString() == "app" ? "grace note (without a slash)" : "grace note (with a slash)";
 
     if (event->type == nodeType::rest)
     {

@@ -102,6 +102,7 @@
     if (b.dataset.mode) request.mode = b.dataset.mode;
     if (b.dataset.value) request.value = b.dataset.value;
     if (b.dataset.form) request.form = b.dataset.form;
+    if (b.dataset.grace) request.grace = b.dataset.grace;
     if (request.op === "slur" || request.op === "hairpin") request.count = parseInt($("ed-span").value, 10);
 
     if (request.op === "selectAll") { if (score()) score().selectAll(); b.blur(); return; }

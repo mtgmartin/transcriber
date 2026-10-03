@@ -30,7 +30,7 @@ namespace
     constexpr int highestPitch = 108;
 
     const char* const eventKeys[] = { "onset", "ticks", "dur", "dots", "tuplet", "tupletNum", "tupletNumbase", "beam",
-                                      "stem", "beamBreak", "beamJoin", "dyn", "artic", "fermata", "text", "textPlace" };
+                                      "stem", "beamBreak", "beamJoin", "dyn", "artic", "fermata", "text", "textPlace", "grace" };
 
     // The properties of a note or chord that mean nothing on a rest.
     bool onlyForNotes (const std::string& key)
@@ -159,21 +159,39 @@ namespace
         int64_t on = 0;
         int64_t len = 0;
         Node node;
+        std::vector<Node> graces;   // the grace notes right before it (they have no length and no slot of their own)
     };
+
+    // A grace note has no time of its own: it stands before a note or chord of its measure ("grace" = "acc" with a slash, or "app").
+    bool isGrace (const Node& n)
+    {
+        return n.has ("grace");
+    }
 
     std::vector<Slot> slotsOf (const Node& layer, const Geometry& g)
     {
         std::vector<Slot> slots;
 
+        std::vector<Node> graces;
+
         for (const auto& e : layer.children)
         {
+            if (isGrace (e))
+            {
+                graces.push_back (e);
+                continue;
+            }
+
             Slot s;
             s.on = e.prop ("onset").asInt();
             s.len = e.prop ("measureRest").asBool() ? g.length : e.prop ("ticks").asInt();
             s.node = e;
+            s.graces = std::move (graces);
+            graces.clear();
             slots.push_back (std::move (s));
         }
 
+        // (grace notes at the end of the measure have no note to stand before: they are let go)
         return slots;
     }
 
@@ -215,7 +233,7 @@ namespace
         {
             const auto& e = layer.children[i];
 
-            if (e.type == nodeType::rest || e.prop ("dur").asInt() < 8)
+            if (e.type == nodeType::rest || e.prop ("dur").asInt() < 8 || isGrace (e))
             {
                 close();
                 previousGroup = ~(size_t) 0;
@@ -311,6 +329,18 @@ namespace
             else
             {
                 flush();
+
+                for (auto& grace : s.graces)
+                {
+                    grace.props["onset"] = Json (s.on);
+                    grace.props["ticks"] = Json (0);
+
+                    for (auto& child : grace.children)
+                        child.props["onset"] = Json (s.on);
+
+                    out.push_back (std::move (grace));
+                }
+
                 s.node.props["onset"] = Json (s.on);
                 s.node.props["ticks"] = Json (s.len);
 
@@ -364,7 +394,8 @@ namespace
             for (auto& layer : measures[mi].children)
                 if (layer.type == nodeType::layer)
                     for (auto& e : layer.children)
-                        all[layer.prop ("n").asInt (1)].push_back ({ &e, mi });
+                        if (! isGrace (e))
+                            all[layer.prop ("n").asInt (1)].push_back ({ &e, mi });
 
         return all;
     }
@@ -611,6 +642,19 @@ namespace
         }
 
         std::vector<Slot> slots() { return slotsOf (layer(), geometry); }
+
+        // The slot of the selected event: grace notes have none, so the events before it that are not grace notes are counted
+        // (for a grace note itself it is the slot of the note it stands before).
+        size_t slotIndex()
+        {
+            size_t n = 0;
+
+            for (size_t i = 0; i < ei && i < layer().children.size(); ++i)
+                if (! isGrace (layer().children[i]))
+                    ++n;
+
+            return n;
+        }
     };
 
     bool locate (Edit& e, const std::string& id)
@@ -775,7 +819,7 @@ namespace
         if (event.type == nodeType::rest)
         {
             auto slots = e.slots();
-            auto& slot = slots[e.ei];
+            auto& slot = slots[e.slotIndex()];
             Spelling s;
             const auto midi = nearestOfLetter (letter, alter, referencePitch (e), s);
 
@@ -856,7 +900,8 @@ namespace
             return fail ("That note value does not exist.");
 
         auto slots = e.slots();
-        auto& target = slots[e.ei];
+        const auto targetIndex = e.slotIndex();
+        auto& target = slots[targetIndex];
 
         if (inTuplet (target.node))
             return fail ("The length of a note inside a triplet cannot be changed yet.");
@@ -902,7 +947,7 @@ namespace
             {
                 auto& s = slots[i];
 
-                if (i <= e.ei || s.on >= end)
+                if (i <= targetIndex || s.on >= end)
                 {
                     kept.push_back (std::move (s));
                     continue;
@@ -947,6 +992,13 @@ namespace
 
         if (event.type == nodeType::rest)
             return fail ("It is already a rest.");
+
+        if (isGrace (event) && ! (event.type == nodeType::chord && ! e.noteId.empty() && event.children.size() > 1))
+        {
+            auto& children = e.layer().children;
+            children.erase (children.begin() + (std::ptrdiff_t) e.ei);
+            return success ("Grace note taken away.");
+        }
 
         if (event.type == nodeType::chord && ! e.noteId.empty() && event.children.size() > 1)
         {
@@ -1244,7 +1296,8 @@ namespace
             return fail ("A note inside a triplet cannot change voice yet.");
 
         auto slotsA = e.slots();
-        Slot moving = slotsA[e.ei];
+        const auto movingIndex = e.slotIndex();
+        Slot moving = slotsA[movingIndex];
         const auto from = moving.on, to = moving.on + moving.len;
 
         // the other voice of this measure, or a new one
@@ -1302,8 +1355,9 @@ namespace
         keptB.push_back (std::move (moving));
 
         // where the note was, a rest stays
-        slotsA[e.ei].node = Node();
-        slotsA[e.ei].node.type = nodeType::rest;
+        slotsA[movingIndex].node = Node();
+        slotsA[movingIndex].node.type = nodeType::rest;
+        slotsA[movingIndex].graces.clear();
 
         const auto layerA = e.li;
         const auto movedId = e.event().id;
@@ -2380,6 +2434,163 @@ namespace
     }
 
     //==========================================================================
+    // Grace notes (Phase 8d)
+
+    // The note value (and dots) a length is written with, when it is one single value.
+    bool singleValueOf (int64_t ticks, int& dur, int& dots)
+    {
+        for (int d = 1; d <= 128; d *= 2)
+        {
+            for (int k = 0; k <= 2; ++k)
+            {
+                if (valueTicks (d, k) == ticks)
+                {
+                    dur = d;
+                    dots = k;
+                    return true;
+                }
+            }
+        }
+
+        return false;
+    }
+
+    // The selected note or chord becomes a grace note of the note or chord after it ("acc" with a slash, "app" without), or a
+    // normal note again ("none", or the same mode again). A grace note has no time: the time of the note becomes a rest (the note
+    // before it can be made longer); a grace note that becomes a normal note takes a 16th (or what is there) from the rest in front
+    // of the note it stood before.
+    EditResult setGrace (Edit& e, std::string mode)
+    {
+        auto& event = e.event();
+
+        if (event.type == nodeType::rest)
+            return fail ("A rest cannot be a grace note.");
+
+        if (mode != "acc" && mode != "app" && mode != "none")
+            return fail ("A grace note is \"acc\" (with a slash), \"app\" (without) or \"none\".");
+
+        if (inTuplet (event))
+            return fail ("A note inside a triplet cannot be a grace note yet.");
+
+        const bool already = isGrace (event);
+
+        if (already && mode != "none" && event.prop ("grace").asString() != mode)
+        {
+            event.props["grace"] = Json (mode);
+            return success ("Grace note changed.", event.id);
+        }
+
+        auto slots = e.slots();
+        const auto k = e.slotIndex();
+
+        if (! already)
+        {
+            if (mode == "none")
+                return fail ("It is not a grace note.");
+
+            if (k + 1 >= slots.size() || slots[k + 1].node.type == nodeType::rest || inTuplet (slots[k + 1].node)
+                || slots[k + 1].on != slots[k].on + slots[k].len)
+                return fail ("A grace note stands in front of a note or chord of its measure: there is none right after this one.");
+
+            Node grace = slots[k].node;
+            const auto id = grace.id;
+
+            for (const auto* key : { "beam", "beamBreak", "beamJoin", "dots", "tie" })
+                grace.props.erase (key);
+
+            for (auto& child : grace.children)
+                child.props.erase ("tie");
+
+            grace.props["grace"] = Json (mode);
+            grace.props["dur"] = Json (8);
+
+            std::vector<Node> all = std::move (slots[k].graces);
+            all.push_back (std::move (grace));
+
+            for (auto& g : slots[k + 1].graces)
+                all.push_back (std::move (g));
+
+            slots[k + 1].graces = std::move (all);
+            slots.erase (slots.begin() + (std::ptrdiff_t) k);   // its time is a gap: written as a rest
+
+            if (! writeLayer (e.score, e.layer(), e.geometry, std::move (slots)))
+                return fail ("The measure could not be written again.");
+
+            return success ("Grace note.", id);
+        }
+
+        // a grace note becomes a normal note: which of the grace notes in front of the note it is
+        size_t first = e.ei;
+
+        while (first > 0 && isGrace (e.layer().children[first - 1]))
+            --first;
+
+        const auto j = e.ei - first;
+
+        if (k == 0 || slots[k - 1].node.type != nodeType::rest || inTuplet (slots[k - 1].node) || slots[k - 1].on + slots[k - 1].len != slots[k].on)
+            return fail ("There is no rest right in front of the note it stands before: make the note before it shorter first.");
+
+        auto& gap = slots[k - 1];
+        const int64_t length = std::min<int64_t> (240, gap.len);
+        int dur = 4, dots = 0;
+
+        if (! singleValueOf (length, dur, dots))
+            return fail ("The rest in front of it has no length a note can take: make the note before it shorter first.");
+
+        Node note = slots[k].graces[j];
+        const auto id = note.id;
+        note.props.erase ("grace");
+        note.props["dur"] = Json (dur);
+
+        if (dots > 0)
+            note.props["dots"] = Json (dots);
+        else
+            note.props.erase ("dots");
+
+        Slot made;
+        made.on = slots[k].on - length;
+        made.len = length;
+        made.node = std::move (note);
+        made.graces.assign (slots[k].graces.begin(), slots[k].graces.begin() + (std::ptrdiff_t) j);
+        slots[k].graces.erase (slots[k].graces.begin(), slots[k].graces.begin() + (std::ptrdiff_t) j + 1);
+        gap.len -= length;
+        slots.insert (slots.begin() + (std::ptrdiff_t) k, std::move (made));
+
+        if (slots[k - 1].len <= 0)
+            slots.erase (slots.begin() + (std::ptrdiff_t) k - 1);
+
+        if (! writeLayer (e.score, e.layer(), e.geometry, std::move (slots)))
+            return fail ("The measure could not be written again.");
+
+        return success ("Normal note again.", id);
+    }
+
+    // A drum as a grace note in front of the selected hit (a flam).
+    EditResult addDrumGrace (Edit& e, const DrumSpec& d, const std::string& mode)
+    {
+        auto& event = e.event();
+
+        if (event.type == nodeType::rest || isGrace (event))
+            return fail ("Select the hit the grace note stands in front of.");
+
+        if (mode != "acc" && mode != "app")
+            return fail ("A grace note is \"acc\" (with a slash) or \"app\" (without).");
+
+        if (inTuplet (event))
+            return fail ("A grace note cannot stand in front of a note inside a triplet yet.");
+
+        auto note = drumNote (e.score, d);
+        note.props["grace"] = Json (mode);
+        note.props["dur"] = Json (8);
+        note.props["onset"] = event.prop ("onset");
+        note.props["ticks"] = Json (0);
+        const auto id = note.id;
+        auto& children = e.layer().children;
+        children.insert (children.begin() + (std::ptrdiff_t) e.ei, std::move (note));
+        return success ("Grace note added.", id);
+    }
+
+    //==========================================================================
     // One operation on the copy of the staff (what the page asked for with "op"); false if there is no such operation.
     // `label` is the name of the undo step.
     bool runOp (Edit& e, const Json& request, EditResult& result, std::string& label)
@@ -2393,6 +2604,23 @@ namespace
             return true;
         }
 
+        // a grace note has no length, no voice of its own and no tie
+        static const std::set<std::string> notForGrace = { "duration", "dot", "letter", "tie", "voice", "beam", "slur", "hairpin" };
+
+        if (isGrace (e.event()) && notForGrace.count (op) != 0)
+        {
+            label = op;
+            result = fail ("A grace note has no length: make it a normal note first (the Normal note button), or select the note it stands before.");
+            return true;
+        }
+
+        if (op == "grace")
+        {
+            label = "Grace note";
+            result = setGrace (e, request.get ("mode").asString());
+            return true;
+        }
+
         if (op == "drumAdd" || op == "drumSet")
         {
             DrumSpec d;
@@ -2402,6 +2630,8 @@ namespace
                 result = fail ("Drums can only be added to a drum score.");
             else if (! drumFrom (request.get ("drum"), d))
                 result = fail ("Choose a drum first.");
+            else if (op == "drumAdd" && request.get ("grace").isString() && ! request.get ("grace").asString().empty())
+                result = addDrumGrace (e, d, request.get ("grace").asString());
             else
                 result = op == "drumAdd" ? addDrum (e, d) : setDrum (e, d);
 
@@ -2901,6 +3131,10 @@ namespace
         const auto& first = index.at (ids.front());
         const auto& last = index.at (ids.back());
 
+        for (const auto& id : ids)
+            if (isGrace (*index.at (id).node))
+                return fail ("A slur or hairpin runs over notes that have a length, not over grace notes.");
+
         if (first.staff != last.staff || first.voice != last.voice)
             return fail ("Select notes of one voice in one staff for a slur or hairpin.");
 
@@ -3258,7 +3492,7 @@ EditResult performEdit (Score& score, UndoManager& undo, const Json& request)
 
     // an operation on several notes
     static const std::set<std::string> forMany = { "pitch", "letter", "duration", "dot", "delete", "interval", "tie", "respell", "stem", "beam",
-                                                   "voice", "dynamic", "artic", "text", "clear", "drumAdd", "drumSet", "ghost", "slur", "hairpin" };
+                                                   "voice", "dynamic", "artic", "text", "clear", "drumAdd", "drumSet", "ghost", "slur", "hairpin", "grace" };
 
     if (forMany.count (requested) != 0 && request.get ("ids").size() >= 2)
         return performMany (score, undo, request);
@@ -3337,6 +3571,9 @@ EditResult performOn (Score& score, UndoManager& undo, const Json& request)
 
     if (! locate (e, request.get ("id").asString()))
         return fail ("Select a note or a rest first.");
+
+    if ((op == "slur" || op == "hairpin") && isGrace (e.event()))
+        return fail ("A slur or hairpin starts on a note that has a length, not on a grace note.");
 
     if (op == "slur")
         return spanner (e, undo, "slur", (int) request.get ("count").asInt (1));

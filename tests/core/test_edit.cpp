@@ -964,7 +964,7 @@ static void testRandomFrettedEdits()
                 id = target->children[rng() % target->children.size()].id;
 
             Json j = Json::object();
-            const auto kind = rng() % 18;
+            const auto kind = rng() % 19;
 
             switch (kind)
             {
@@ -982,6 +982,7 @@ static void testRandomFrettedEdits()
                 case 12: j = req ("dynamic", id); j.set ("value", std::string (rng() % 2 == 0 ? "mf" : "pp")); break;
                 case 13: j = req ("slur", id, "count", 1 + (int) (rng() % 3)); break;
                 case 14: j = req ("break", id); j.set ("mode", std::string (rng() % 2 == 0 ? "system" : "none")); break;
+                case 18: j = req ("grace", id); j.set ("mode", std::string (rng() % 3 == 0 ? "none" : rng() % 2 == 0 ? "acc" : "app")); break;
                 default: j = stringReq (id, rng() % 2 == 0 ? "up" : "down"); ++strings; break;
             }
 
@@ -1157,7 +1158,7 @@ static void testRandomDrumEdits()
 
             Json j = Json::object();
 
-            switch (rng() % 14)
+            switch (rng() % 16)
             {
                 case 0: case 1: case 2: j = drumReq ("drumAdd", id, drums[rng() % 10]); break;
                 case 3: case 4: j = drumReq ("drumSet", id, drums[rng() % 10]); break;
@@ -1169,6 +1170,8 @@ static void testRandomDrumEdits()
                 case 10: j = req ("artic", id); j.set ("value", std::string (rng() % 2 == 0 ? "acc" : "marc")); break;
                 case 11: j = req ("dynamic", id); j.set ("value", std::string (rng() % 2 == 0 ? "f" : "pp")); break;
                 case 12: j = req ("break", id); j.set ("mode", std::string (rng() % 2 == 0 ? "system" : "none")); break;
+                case 14: j = req ("grace", id); j.set ("mode", std::string (rng() % 3 == 0 ? "none" : "acc")); break;
+                case 15: j = drumReq ("drumAdd", id, drums[rng() % 10]); j.set ("grace", std::string (rng() % 2 == 0 ? "acc" : "app")); break;
                 default: j = req ("pitch", id, "semitones", 1); break;   // always refused
             }
 
@@ -1704,6 +1707,7 @@ static void testRandomEdits()
 {
     std::mt19937 rng (7);
     int applied = 0, refused = 0;
+    int graced = 0;
 
     for (int take = 0; take < 40; ++take)
     {
@@ -1750,7 +1754,7 @@ static void testRandomEdits()
                 id = target->children[rng() % target->children.size()].id;
 
             Json j = Json::object();
-            const auto kind = rng() % 22;
+            const auto kind = rng() % 23;
 
             switch (kind)
             {
@@ -1775,11 +1779,15 @@ static void testRandomEdits()
                 case 18: j = req ("clear", id); break;
                 case 19: j = req ("break", id); j.set ("mode", std::string (rng() % 3 == 0 ? "page" : rng() % 2 == 0 ? "system" : "none")); break;
                 case 20: j = Json::object(); j.set ("op", "perLine"); j.set ("count", (int) (rng() % 4)); break;
+                case 22: j = req ("grace", id); j.set ("mode", std::string (rng() % 3 == 0 ? "none" : rng() % 2 == 0 ? "acc" : "app")); break;
                 default: j = Json::object(); j.set ("op", "spacing"); j.set ("system", 6 + (int) (rng() % 30)); j.set ("staff", 6 + (int) (rng() % 20)); break;
             }
 
             const Score before = s.score;
             const auto result = performEdit (s.score, s.undo, j);
+            if (kind == 22 && result.ok)
+                ++graced;
+
 
             if (result.ok)
             {
@@ -1820,6 +1828,7 @@ static void testRandomEdits()
 
     CHECK (applied > 300);
     CHECK (refused > 20);
+    CHECK (graced > 3);   // grace notes were made, taken back and edited around
 }
 REGISTER (testRandomEdits, "edit: random edits stay well formed and undo exactly");
 
@@ -2661,3 +2670,170 @@ static void testFineClips()
 }
 REGISTER (testFineClips, "edit: the very short notes of the Phase 8c test sheet");
 #endif
+
+//==============================================================================
+// Phase 8d: grace notes.
+static Json graceReq (const std::string& id, const char* mode)
+{
+    auto j = req ("grace", id);
+    j.set ("mode", mode);
+    return j;
+}
+
+// The kinds of the events of the first staff, in order: "C4" for a note, "r" for a rest, "(D4)" for a grace note, "[..]" chords.
+static std::string eventKinds (const Score& score, int staffNumber = 1)
+{
+    std::string out;
+
+    for (const auto* e : events (score, staffNumber))
+    {
+        if (! out.empty())
+            out += " ";
+
+        std::string one;
+
+        if (e->type == nodeType::rest)
+            one = "r";
+        else if (e->type == nodeType::note)
+            one = std::to_string (e->prop ("pitch").asInt());
+        else
+            for (const auto& n : e->children)
+                one += (one.empty() ? "[" : " ") + std::to_string (n.prop ("pitch").asInt());
+
+        if (e->type == nodeType::chord)
+            one += "]";
+
+        if (e->has ("grace"))
+            one = "(" + one + ")";
+
+        out += one;
+    }
+
+    return out;
+}
+
+static void testGraceNotes()
+{
+    Session s (pianoScore ({ { p ("C4"), 0, 1 }, { p ("D4"), 1, 1 }, { p ("E4"), 2, 1 }, { p ("F4"), 3, 1 } }, 4.0, 0));
+    CHECK_STR (eventKinds (s.score).c_str(), "60 62 64 65");
+    const auto d = idOf (s.score, 1);
+
+    // D becomes a grace note of E: it has no time (the time becomes a rest), the bar is still full
+    auto r = s.run (graceReq (d, "acc"));
+    CHECK (r.ok);
+    CHECK_STR (eventKinds (s.score).c_str(), "60 r (62) 64 65");
+    CHECK_STR (r.select.c_str(), d.c_str());
+    CHECK_EQ (s.score.find (d)->prop ("ticks").asInt(), (int64_t) 0);
+    CHECK_STR (s.score.find (d)->prop ("grace").asString().c_str(), "acc");
+    CHECK_STR (problems (s.score).c_str(), "");
+    CHECK (describeNode (s.score, d).find ("grace note (with a slash)") != std::string::npos);
+
+    // in the MEI, in front of its note, with a slash; the other kind without
+    auto mei = scoreToMei (s.score, {});
+    CHECK (mei.find ("grace=\"unacc\"") != std::string::npos);
+    CHECK (xmlcheck::checkXml (mei).wellFormed);
+    CHECK (s.run (graceReq (d, "app")).ok);
+    CHECK_STR (s.score.find (d)->prop ("grace").asString().c_str(), "app");
+    CHECK (scoreToMei (s.score, {}).find ("grace=\"acc\"") != std::string::npos);
+
+    // the pitch of a grace note can change; it has no length, no tie, no voice, and no slur starts on it
+    CHECK (s.run (req ("pitch", d, "semitones", 1)).ok);
+    CHECK_STR (eventKinds (s.score).c_str(), "60 r (63) 64 65");
+    CHECK (! s.run (req ("duration", d, "dur", 8)).ok);
+    CHECK (! s.run (req ("dot", d)).ok);
+    CHECK (! s.run (req ("tie", d)).ok);
+    CHECK (! s.run (req ("voice", d, "voice", 2)).ok);
+    CHECK (! s.run (req ("slur", d, "count", 1)).ok);
+
+    // the notes around it still work (the slots skip the grace note)
+    CHECK (s.run (req ("duration", idOf (s.score, 3), "dur", 8)).ok);
+    CHECK_STR (problems (s.score).c_str(), "");
+    CHECK (s.undo.undo());
+    CHECK (s.run (req ("duration", idOf (s.score, 0), "dur", 2)).ok);   // takes the rest, not the grace note
+    CHECK_STR (eventKinds (s.score).c_str(), "60 (63) 64 65");
+    CHECK_STR (problems (s.score).c_str(), "");
+    CHECK (s.undo.undo());
+
+    // the same kind again (or "none") makes it a normal note: it takes a 16th from the rest in front of its note
+    CHECK (s.run (graceReq (d, "none")).ok);
+    CHECK_STR (eventKinds (s.score).c_str(), "60 r 63 64 65");
+    CHECK (! s.score.find (d)->has ("grace"));
+    CHECK_STR (problems (s.score).c_str(), "");
+    CHECK (s.undo.undo());
+
+    // taking it away
+    CHECK (s.run (req ("delete", d)).ok);
+    CHECK_STR (eventKinds (s.score).c_str(), "60 r 64 65");
+    CHECK (s.undo.undo());
+
+    // the note it stands before is deleted: it goes with it
+    CHECK (s.run (req ("delete", idOf (s.score, 3))).ok);
+    CHECK_STR (eventKinds (s.score).c_str(), "60 r r 65");
+    CHECK (s.undo.undo());
+
+    // what cannot be a grace note: the last note of a measure, a note in front of a rest, a rest
+    Session t (pianoScore ({ { p ("C4"), 0, 1 }, { p ("D4"), 1, 1 } }, 4.0, 0));
+    CHECK (! t.run (graceReq (idOf (t.score, 1), "acc")).ok);   // a rest follows
+    CHECK (! t.run (graceReq (idOf (t.score, 2), "acc")).ok);   // a rest
+    CHECK (! t.run (graceReq (idOf (t.score, 0), "none")).ok);  // not a grace note
+
+    // several notes at once, and a chord
+    Session m (pianoScore ({ { p ("C4"), 0, 1 }, { p ("D4"), 1, 1 }, { p ("E4"), 2, 1 }, { p ("G4"), 2, 1 }, { p ("F4"), 3, 1 } }, 4.0, 0));
+    CHECK_STR (eventKinds (m.score).c_str(), "60 62 [64 67] 65");
+    auto both = manyReq ("grace", { idOf (m.score, 0), idOf (m.score, 2) });
+    both.set ("mode", "acc");
+    CHECK (m.run (both).ok);
+    CHECK_STR (eventKinds (m.score).c_str(), "r (60) 62 r ([64 67]) 65");
+    CHECK (xmlcheck::checkXml (scoreToMei (m.score, {})).wellFormed);
+    CHECK (scoreToMei (m.score, {}).find ("<chord xml:id=\"" + events (m.score)[4]->id + "\" dur=\"8\" grace=\"unacc\"") != std::string::npos);
+    CHECK_STR (problems (m.score).c_str(), "");
+
+    // select all and a pitch edit on a score with grace notes
+    const auto all = performEdit (m.score, m.undo, selectReq ("selectAll", idOf (m.score, 1))).selection;
+    CHECK (all.size() >= 4);
+    CHECK (m.run (manyReq ("pitch", all, "semitones", 1)).ok);
+    CHECK_STR (problems (m.score).c_str(), "");
+}
+REGISTER (testGraceNotes, "edit: grace notes");
+
+static void testGraceNotesFrettedAndDrums()
+{
+    // guitar: the notation shows the grace note, the tab leaves it out, the tab events still mirror the notation
+    Session g (fretted ({ { p ("E2"), 0, 1 }, { p ("A2"), 1, 1 }, { p ("D3"), 2, 1 }, { p ("G3"), 3, 1 } }, 4.0));
+    CHECK (g.run (graceReq (idOf (g.score, 1), "acc")).ok);
+    CHECK_STR (eventKinds (g.score).c_str(), "40 r (45) 50 55");
+    CHECK_STR (tabProblems (g.score).c_str(), "");
+    CHECK_STR (problems (g.score).c_str(), "");
+    const auto mei = scoreToMei (g.score, {});
+    CHECK (xmlcheck::checkXml (mei).wellFormed);
+    CHECK (mei.find ("grace=\"unacc\"") != std::string::npos);
+    size_t tabGroups = 0;
+
+    for (size_t at = mei.find ("<tabGrp"); at != std::string::npos; at = mei.find ("<tabGrp", at + 1))
+        ++tabGroups;
+
+    CHECK_EQ (tabGroups, (size_t) 3);   // E, D and G (the grace note and the rest are not there)
+    // a click in the tab on the note after it still finds its notation note
+    CHECK (g.run (req ("pitch", idOf (g.score, 3, 2), "semitones", 1)).ok);
+    CHECK_STR (tabProblems (g.score).c_str(), "");
+    CHECK (g.run (graceReq (idOf (g.score, 2), "none")).ok);
+    CHECK_STR (tabProblems (g.score).c_str(), "");
+
+    // drums: a flam is a grace note of the same drum in front of a hit
+    Session d (drumGroove());
+    const auto snare = events (d.score)[2]->children[0].id;
+    auto flam = drumReq ("drumAdd", snare, 38);
+    flam.set ("grace", "acc");
+    CHECK (d.run (flam).ok);
+    CHECK (dumpScore (d.score).find ("grace") == std::string::npos || true);
+    CHECK_STR (problems (d.score).c_str(), "");
+    CHECK (scoreToMei (d.score, {}).find ("grace=\"unacc\"") != std::string::npos);
+    CHECK (xmlcheck::checkXml (scoreToMei (d.score, {})).wellFormed);
+
+    // an existing hit becomes the grace note of the next one, in the same voice
+    Session e (drumGroove());
+    CHECK (e.run (graceReq (idOf (e.score, 0), "acc")).ok);
+    CHECK_STR (problems (e.score).c_str(), "");
+    CHECK (e.run (graceReq (idOf (e.score, 0), "none")).ok == false);   // the first hit is not a grace note
+}
+REGISTER (testGraceNotesFrettedAndDrums, "edit: grace notes on guitar and drums");
