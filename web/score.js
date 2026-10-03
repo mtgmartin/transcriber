@@ -46,8 +46,9 @@
     const scale = Math.max(10, Math.round(settings.zoom * 0.55));
     const width = Math.max(200, view.clientWidth - 28 - 17);   // room for the scroll bar
     const pageWidth = Math.floor(width * 100 / scale);
-    // a score with line or page breaks of its own is laid out by them alone ("encoded"); otherwise the program breaks the lines
-    const common = { scale: scale, pageWidth: pageWidth, footer: "none", header: "none", font: "Bravura", breaks: /<(sb|pb)\/>/.test(mei) ? "encoded" : "auto",
+    // "smart" with a threshold of 0: the line and page breaks of the score are kept, and a line that is too long for the window
+    // is broken again (without breaks in the score it works like "auto"; "encoded" squeezed long lines together)
+    const common = { scale: scale, pageWidth: pageWidth, footer: "none", header: "none", font: "Bravura", breaks: "smart", breaksSmartSb: 0,
                      spacingSystem: layout.systemSpacing > 0 ? layout.systemSpacing : 14,
                      spacingStaff: layout.staffSpacing > 0 ? layout.staffSpacing : 10, justifyVertically: false };
     return settings.view === "pages"
@@ -60,7 +61,7 @@
   let longLines = false;
 
   function showInfo() {
-    renderInfo.textContent = infoBase + (longLines ? " · Some lines are longer than the window: use fewer measures per line, or a smaller zoom" : "");
+    renderInfo.textContent = infoBase + (longLines ? " · Some lines are broken again because they do not fit the window: use fewer measures per line, or a smaller zoom" : "");
   }
 
   let observer = null;
@@ -82,6 +83,12 @@
     const loaded = performance.now();
     const measures = (mei.match(/<measure /g) || []).length;
 
+    // the measures that start a line or a page by a break of the score
+    const breakIds = new Set();
+    const breakRe = /(?:<(?:sb|pb)\/>\s*)+<measure[^>]*xml:id="([^"]+)"/g;
+    let found;
+    while ((found = breakRe.exec(mei))) breakIds.add(found[1]);
+
     holder.className = settings.view;
     holder.innerHTML = "";
 
@@ -101,10 +108,14 @@
       el.style.width = el.style.height = "";   // the drawing sets the size
       ++drawn;
 
-      // a line that is longer than the window (too many measures between two breaks) is cut off at the edge: say so
-      const edge = el.getBoundingClientRect().right;
-      const tooLong = Array.from(el.querySelectorAll("g.system")).some(function (sys) { return sys.getBoundingClientRect().right > edge + 2; });
-      if (tooLong) { longLines = true; showInfo(); }
+      // a line that does not start at a break of the score was broken again, because it did not fit the window: say so
+      if (breakIds.size > 0 && !longLines) {
+        const systems = el.querySelectorAll("g.system");
+        for (let i = 1; i < systems.length; i++) {
+          const m = systems[i].querySelector("g.measure");
+          if (m && !breakIds.has(m.id)) { longLines = true; showInfo(); break; }
+        }
+      }
       applySelection(false);
     }
 

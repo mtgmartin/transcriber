@@ -415,10 +415,10 @@ Full results are in `docs/phase1-results.md`.
 - Tests: `test_edit.cpp` (marks, spanners incl. removal and replacement, tempo, MEI contents and well-formedness; the random edit test draws the new operations too). Checked in Verovio (browser harness): dynam, artic, slur, hairpin, fermata, dir and tempo all render.
 - Not in 7c: guitar/bass/drum markings, title and composer (they go on the page and the PDF in Phase 8).
 
-**Part 7d (build 0.10.0, 129 core tests): page layout of a piano score.**
+**Part 7d (build 0.10.0, fix 0.10.1; 129 core tests): page layout of a piano score.**
 - Data: a measure of the first staff can carry `break` = "system" or "page" (written as `<sb/>` / `<pb/>` before it in the MEI); the score has at most one `layout` node with `systemSpacing` and `staffSpacing` (Verovio units, default 14 and 10). `CaptureService::getMei` sends the spacing next to the MEI (`layout`).
 - `Edit.cpp` operations: `break` (id, mode system / page / none; same mode again removes it; the first measure refused), `perLine` (count 0-32: a line break before every count-th measure, other line breaks removed, page breaks kept; one undo step), `spacing` (system and/or staff, 4-40; creates the layout node).
-- Page: fourth row of the Edit bar; `score.js` passes the spacing to Verovio and uses `breaks: "encoded"` when the MEI has `<sb/>`/`<pb/>` and "auto" otherwise (checked in Verovio 6.3: "smart" ignored the encoded breaks), and warns when a line is wider than the window.
+- Page: fourth row of the Edit bar; `score.js` passes the spacing to Verovio and uses `breaks: "smart"` with `breaksSmartSb: 0` (the breaks of the score are kept and a line that does not fit is broken again; 0.10.0 used "encoded", which squeezed everything between two breaks into one line, and Verovio's default "smart" threshold of 0.66 ignored breaks of short lines) and says so when a drawn line does not start at a break of the score.
 - Tests: `test_edit.cpp` (breaks, measures per line, spacing; the random edit test draws them too). Fixture `t43-edit-pages` (24 bars). Test sheet `docs/phase7d-tests.md`.
 - Not in 7d: page size and margins, staff size (they belong to the PDF export, Phase 8), breaks in guitar/bass/drum scores.
 
@@ -513,6 +513,6 @@ Tools in `tools/live/`. Copy them to the scratchpad or run them in place.
 
 ## 9. Status (update every session)
 
-- **Done:** Phases 0-6 with their Live tests (6: `docs/phase6-results.md`). Phase 7d code (build 0.10.0, 129 core tests): page layout; its Live check is next. Phase 7a (0.7.1), 7b (0.8.0) and 7c (0.9.0; `docs/phase7c-results.md`) passed in Live; 0.9.1 has two small dialog fixes (`docs/phase7a-results.md`): editing notes and rhythms of piano scores.
-- **Waiting on the user:** (1) install 0.10.0 (admin PowerShell, Live closed, `scripts\install.ps1`); (2) the reference clips: about 10 clips exported from Live (.mid) with the notation you expect; (3) your own guitar riffs and basslines to confirm the tab (Phase 6 gate).
-- **Next:** the 7d Live check (`docs/phase7d-tests.md`, then `docs/phase7d-results.md`), then editing for guitar, bass and drums.
+- **Done:** Phases 0-6 with their Live tests (6: `docs/phase6-results.md`). Phase 7d (page layout, build 0.10.0, 129 core tests) passed in Live except for lines between two breaks being squeezed (`docs/phase7d-results.md`); the fix is in 0.10.1 (checked in the browser harness only). Phase 7a (0.7.1), 7b (0.8.0) and 7c (0.9.0; `docs/phase7c-results.md`) passed in Live; 0.9.1 has two small dialog fixes (`docs/phase7a-results.md`): editing notes and rhythms of piano scores.
+- **Waiting on the user:** (1) install 0.10.1 (admin PowerShell, Live closed, `scripts\install.ps1`) so that I can look at the fixed lines in Live (a short check: bar 5 break, 8 per line); (2) the reference clips: about 10 clips exported from Live (.mid) with the notation you expect; (3) your own guitar riffs and basslines to confirm the tab (Phase 6 gate).
+- **Next:** editing for guitar, bass and drums (the second staff mirrors the first), then Phase 8 (PDF export).
