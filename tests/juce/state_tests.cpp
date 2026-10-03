@@ -1008,7 +1008,15 @@ namespace
         service.arm();
         const auto started = juce::Time::getMillisecondCounterHiRes();
         host.play (0.0);
-        host.run (1201.0);
+
+        // (the simulated host is much faster than Live: in pieces, so that the service thread drains the records as it does in real time)
+        for (int piece = 0; piece < 60; ++piece)
+        {
+            host.run (20.0);
+            juce::Thread::sleep (25);
+        }
+
+        host.run (1.0);
         host.stop();
         CHECK (waitForVersions (service, 1));
         const auto status = service.getStatus();
