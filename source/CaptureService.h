@@ -54,6 +54,9 @@ public:
     // Versions
     void selectVersion (const juce::String& id);
     void renameVersion (const juce::String& id, const juce::String& name);
+
+    // The title and composer written above the score of the active take (page and PDF).
+    void setScoreMeta (const juce::String& title, const juce::String& composer);
     void duplicateVersion (const juce::String& id);
     void deleteVersion (const juce::String& id);
 

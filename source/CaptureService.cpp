@@ -392,6 +392,12 @@ void CaptureService::renameVersion (const juce::String& id, const juce::String& 
     document.rename (id.toStdString(), name.trim().substring (0, 80).toStdString());
 }
 
+void CaptureService::setScoreMeta (const juce::String& title, const juce::String& composer)
+{
+    const std::lock_guard<std::mutex> lock (mutex);
+    document.setMeta (document.activeId(), title.toStdString(), composer.toStdString());
+}
+
 void CaptureService::duplicateVersion (const juce::String& id)
 {
     const std::lock_guard<std::mutex> lock (mutex);
@@ -505,6 +511,8 @@ juce::var CaptureService::getStatus() const
         st->setProperty ("keyTonic", settings.keyTonic);
         st->setProperty ("keyMinor", settings.keyMinor);
         o->setProperty ("settings", juce::var (st));
+        o->setProperty ("title", juce::String::fromUTF8 (v->title.c_str()));
+        o->setProperty ("composer", juce::String::fromUTF8 (v->composer.c_str()));
 
         const auto profile = v->instrument();
         o->setProperty ("instrument", juce::String (trs::instrumentName (profile.type)));
@@ -613,7 +621,8 @@ juce::var CaptureService::getMei() const
     if (key != meiKey)
     {
         trs::MeiOptions options;
-        options.title = v->name;
+        options.title = v->title;
+        options.composer = v->composer;
         meiCache = trs::scoreToMei (v->score, options);
         meiKey = key;
     }

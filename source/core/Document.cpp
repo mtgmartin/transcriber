@@ -421,6 +421,58 @@ bool Document::rename (const std::string& id, const std::string& newName)
     return true;
 }
 
+namespace
+{
+    // One line of at most 120 characters (counted in characters, not bytes), no control characters, trimmed.
+    std::string oneLine (const std::string& text)
+    {
+        std::string out;
+        size_t characters = 0;
+
+        for (size_t i = 0; i < text.size() && characters < 120;)
+        {
+            const auto c = (unsigned char) text[i];
+            const size_t length = c < 0x80 ? 1 : (c >> 5) == 6 ? 2 : (c >> 4) == 14 ? 3 : (c >> 3) == 30 ? 4 : 1;
+
+            if (c < 0x20 || c == 0x7f || i + length > text.size())
+            {
+                out += c < 0x20 || c == 0x7f ? ' ' : '?';
+                ++i;
+            }
+            else
+            {
+                out.append (text, i, length);
+                i += length;
+            }
+
+            ++characters;
+        }
+
+        const auto first = out.find_first_not_of (' ');
+        const auto last = out.find_last_not_of (' ');
+        return first == std::string::npos ? std::string() : out.substr (first, last - first + 1);
+    }
+}
+
+bool Document::setMeta (const std::string& id, const std::string& title, const std::string& composer)
+{
+    auto* v = findMutable (id);
+
+    if (v == nullptr)
+        return false;
+
+    const auto t = oneLine (title), c = oneLine (composer);
+
+    if (t == v->title && c == v->composer)
+        return true;
+
+    v->title = t;
+    v->composer = c;
+    ++v->metaRevision;
+    ++structureRevision;
+    return true;
+}
+
 std::string Document::duplicate (const std::string& id, int64_t nowMs)
 {
     const auto* source = find (id);
@@ -487,6 +539,13 @@ Json Document::toJson() const
         auto o = Json::object();
         o.set ("id", v.id);
         o.set ("name", v.name);
+
+        if (! v.title.empty())
+            o.set ("title", v.title);
+
+        if (! v.composer.empty())
+            o.set ("composer", v.composer);
+
         o.set ("createdAt", v.createdAtMs);
         o.set ("profile", v.profile);
         o.set ("settings", v.settings);
@@ -535,6 +594,8 @@ LoadResult Document::fromJson (const Json& source, Document& result, std::string
         Version v;
         v.id = o.get ("id").asString();
         v.name = o.get ("name").asString();
+        v.title = oneLine (o.get ("title").asString());
+        v.composer = oneLine (o.get ("composer").asString());
         v.createdAtMs = o.get ("createdAt").asInt();
         v.profile = o.get ("profile").isObject() ? o.get ("profile") : Json::object();
         v.settings = o.get ("settings").isObject() ? o.get ("settings") : Json::object();

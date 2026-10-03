@@ -551,6 +551,47 @@ namespace
         return juce::var (o);
     }
 
+    void testTitleAndComposer()
+    {
+        juce::MemoryBlock saved;
+
+        {
+            CaptureService service;
+            record (service, 4, 0);
+            CHECK (waitForVersions (service, 1));
+
+            // no title: none in the status, an empty title in the MEI (the page then leaves the header out)
+            auto status = service.getStatus();
+            CHECK_EQ (status.getProperty ("title", "x").toString().length(), 0);
+            CHECK (! service.getMei().getProperty ("mei", {}).toString().contains ("<composer>"));
+
+            // a title and a composer with letters of Latin Extended: in the status and in the MEI, and the keys still match
+            const auto keyBefore = service.getMei().getProperty ("key", {}).toString();
+            service.setScoreMeta (juce::String::fromUTF8 ("Strofa \xc4\x8d & \"A\""), juce::String::fromUTF8 ("M. \xc4\x86osi\xc4\x87"));
+            status = service.getStatus();
+            CHECK_STR (status.getProperty ("title", {}).toString().toRawUTF8(), "Strofa \xc4\x8d & \"A\"");
+            CHECK_STR (status.getProperty ("composer", {}).toString().toRawUTF8(), "M. \xc4\x86osi\xc4\x87");
+
+            const auto mei = service.getMei();
+            CHECK (mei.getProperty ("key", {}).toString() != keyBefore);
+            CHECK (mei.getProperty ("key", {}).toString() == status.getProperty ("scoreKey", {}).toString());
+            CHECK (mei.getProperty ("mei", {}).toString().contains (juce::String::fromUTF8 ("<title>Strofa \xc4\x8d &amp; &quot;A&quot;</title>")));
+            CHECK (mei.getProperty ("mei", {}).toString().contains (juce::String::fromUTF8 ("<composer>M. \xc4\x86osi\xc4\x87</composer>")));
+
+            // setting the same again does not change the key (the page would engrave the score again for nothing)
+            service.setScoreMeta (juce::String::fromUTF8 ("Strofa \xc4\x8d & \"A\""), juce::String::fromUTF8 ("M. \xc4\x86osi\xc4\x87"));
+            CHECK (service.getMei().getProperty ("key", {}).toString() == mei.getProperty ("key", {}).toString());
+
+            service.saveState (saved);
+        }
+
+        // saved with the take and back
+        CaptureService again;
+        again.loadState (saved.getData(), saved.getSize());
+        CHECK_STR (again.getStatus().getProperty ("title", {}).toString().toRawUTF8(), "Strofa \xc4\x8d & \"A\"");
+        CHECK_STR (again.getStatus().getProperty ("composer", {}).toString().toRawUTF8(), "M. \xc4\x86osi\xc4\x87");
+    }
+
     void testEditing()
     {
         CaptureService service;
@@ -655,6 +696,7 @@ namespace
         { "service: the state size is reported", testStateSizeIsReported },
         { "service: transcription settings", testTranscriptionSettings },
         { "service: instruments and drum maps", testInstrumentsAndDrumMaps },
+        { "service: title and composer", testTitleAndComposer },
         { "service: editing the score", testEditing },
     };
 }

@@ -34,6 +34,8 @@ class Version
 public:
     std::string id;
     std::string name;
+    std::string title;             // written above the score on the page and in the PDF; empty: none
+    std::string composer;
     int64_t createdAtMs = 0;       // milliseconds since 1970 (UTC)
     Json profile = Json::object(); // the instrument as it was when recording, e.g. {"type":"piano"}
     Json settings = Json::object();// transcription settings (quantisation grid, split point, ...)
@@ -68,13 +70,14 @@ public:
     void discardEdits();
 
     // Increases when the reading or the score changes.
-    uint64_t revision() const noexcept { return readingRevision + score.revision(); }
+    uint64_t revision() const noexcept { return readingRevision + score.revision() + metaRevision; }
 
 private:
     friend class Document;
     mutable ResolvedCapture cache;
     mutable bool cacheValid = false;
     uint64_t readingRevision = 0;
+    uint64_t metaRevision = 0;   // counts changes of the title and composer
 };
 
 // A step that upgrades a saved document from schema version `index` to `index + 1`.
@@ -104,6 +107,9 @@ public:
 
     bool select (const std::string& id);
     bool rename (const std::string& id, const std::string& newName);
+
+    // The title and composer of the score (each up to 120 characters, one line); empty text takes them away.
+    bool setMeta (const std::string& id, const std::string& title, const std::string& composer);
 
     // A copy of the version (with its score) named "<name> copy"; the copy becomes active. Returns its id.
     std::string duplicate (const std::string& id, int64_t nowMs);

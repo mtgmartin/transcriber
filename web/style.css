@@ -110,3 +110,15 @@ button.danger { background: #5a2323; border-color: #f08a8a; }
 .grp[hidden] { display: none; }
 #edit-bar5 { margin: 8px 0 0; gap: 6px; align-items: center; }
 #edit-bar5[hidden] { display: none; }
+
+/* the font of titles and of the text in the notation, on the page and in the PDF */
+@font-face { font-family: "DejaVu Serif"; src: url("DejaVuSerif.ttf"); font-weight: normal; font-style: normal; }
+@font-face { font-family: "DejaVu Serif"; src: url("DejaVuSerif-Bold.ttf"); font-weight: bold; font-style: normal; }
+@font-face { font-family: "DejaVu Serif"; src: url("DejaVuSerif-Italic.ttf"); font-weight: normal; font-style: italic; }
+
+#page-bar { gap: 6px; align-items: center; }
+#page-bar input[type=text] { font: inherit; color: var(--ink); background: #26304a; border: 1px solid var(--rule); border-radius: 4px; padding: 4px 6px; }
+#page-bar input[type=text]:focus-visible { border-color: var(--accent); outline: none; }
+#page-bar .sep { width: 1px; align-self: stretch; background: var(--rule); margin: 0 4px; }
+#pdf-msg:empty { display: none; }
+#notation-pages.pages .sheet svg { width: 100%; height: auto; }

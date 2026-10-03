@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.22)
 
-project(TRANSCRIBER VERSION 0.12.1)
+project(TRANSCRIBER VERSION 0.13.0)
 
 # Third-party code is downloaded at configure time (pinned, hash-checked) rather than
 # committed, to keep the repository and local checkout small.
@@ -72,6 +72,7 @@ juce_add_binary_data(TranscriberWebData
         web/score.js
         web/drums.js
         web/edit.js
+        web/pdf.js
         web/style.css
         web/piano.mei
         web/drums.mei

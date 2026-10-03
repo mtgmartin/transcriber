@@ -62,7 +62,19 @@ transcriber_fetch_npm(svg2pdf.js 2.8.1
     dist/svg2pdf.umd.min.js
     svg2pdf_js)
 
-# Verovio starts its WASM runtime asynchronously and only calls onRuntimeInitialized if a
+# DejaVu Serif (Bitstream Vera licence, free to embed): the font of titles and text on the page and in the PDF.
+# It has the Latin Extended letters (c with caron and the like) that jsPDF's standard fonts lack. Three styles are
+# enough: text in notation is regular, bold (tempo words) or italic (expression text).
+foreach(style IN ITEMS "" "-Bold" "-Italic")
+    string(REPLACE "-" "_" style_var "DejaVuSerif${style}")
+    transcriber_fetch_npm(dejavu-fonts-ttf 2.37.3
+        7f585dee325b7906b5556730f8ad8aad35d2e74cd331a1e9542e1720a26935c0de611e5a8ccb63fe22e540360dbcb38a6a6501dc04555427fbf65370355ced49
+        ttf/DejaVuSerif${style}.ttf
+        ${style_var})
+endforeach()
+
+# Verovio starts its WASM runtime asynchronously
+ and only calls onRuntimeInitialized if a
 # handler is already attached; there is no "already started" flag. A handler attached by a
 # later <script> tag can therefore miss the call (seen in Live: 1 of 6 page loads). Code
 # appended to the same file runs before any async continuation, so the race cannot happen.
@@ -73,4 +85,4 @@ file(APPEND "${verovio_patched}"
     "\n;/* Added by Transcriber's build (cmake/Dependencies.cmake) */\n"
     "window.verovioReady = new Promise(function (resolve) { verovio.module.onRuntimeInitialized = resolve; });\n")
 
-set(TRANSCRIBER_WEB_LIBRARIES "${verovio_patched}" "${jspdf_js}" "${svg2pdf_js}")
+set(TRANSCRIBER_WEB_LIBRARIES "${verovio_patched}" "${jspdf_js}" "${svg2pdf_js}" "${DejaVuSerif}" "${DejaVuSerif_Bold}" "${DejaVuSerif_Italic}")

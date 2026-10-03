@@ -798,6 +798,45 @@ namespace
         CHECK (old.find (fresh)->instrument().type == InstrumentType::piano);
     }
 
+    void testTitleAndComposer()
+    {
+        auto doc = makeDocument();
+        const auto id = doc.versions()[0].id;
+        const auto revision = doc.revision();
+
+        // set, trimmed to one line; the revision moves so that the state is saved
+        CHECK (doc.setMeta (id, "  Strofa \xc4\x8d \"A\"\n", "M. \xc4\x86osi\xc4\x87\t"));
+        CHECK_STR (doc.find (id)->title.c_str(), "Strofa \xc4\x8d \"A\"");   // the line break became a space and was trimmed away
+        CHECK_STR (doc.find (id)->composer.c_str(), "M. \xc4\x86osi\xc4\x87");
+        CHECK (doc.revision() != revision);
+        CHECK (! doc.setMeta ("ver-999", "x", "y"));
+
+        // setting the same again changes nothing
+        const auto again = doc.revision();
+        CHECK (doc.setMeta (id, "Strofa \xc4\x8d \"A\"", "M. \xc4\x86osi\xc4\x87"));
+        CHECK (doc.revision() == again);
+
+        // at most 120 characters (not bytes): 130 two-byte letters are cut at 120 letters
+        std::string long130;
+        for (int k = 0; k < 130; ++k) long130 += "\xc4\x8d";
+        CHECK (doc.setMeta (id, long130, ""));
+        CHECK_EQ ((int) doc.find (id)->title.size(), 240);
+
+        // saved and loaded; an old document without them has none; a copy keeps them
+        CHECK (doc.setMeta (id, "Title", "Composer"));
+        Json parsed;
+        CHECK (Json::parse (doc.toJson().dump(), parsed));
+        Document loaded;
+        CHECK (Document::fromJson (parsed, loaded) == LoadResult::ok);
+        CHECK_STR (loaded.find (id)->title.c_str(), "Title");
+        CHECK_STR (loaded.find (id)->composer.c_str(), "Composer");
+        CHECK (doc.setMeta (id, "", ""));
+        CHECK (doc.toJson().dump().find ("\"title\"") == std::string::npos);
+        CHECK (doc.setMeta (id, "Title", "Composer"));
+        const auto copy = doc.duplicate (id, 5);
+        CHECK_STR (doc.find (copy)->title.c_str(), "Title");
+    }
+
     void testDocumentRoundTrip()
 
     {
@@ -1044,6 +1083,7 @@ namespace
     REGISTER (testRevisionTracksChanges, "versions: revision tracks changes");
     REGISTER (testReadingIsPerVersion, "versions: the reading belongs to the version");
     REGISTER (testDocumentProfiles, "document: instrument profiles");
+    REGISTER (testTitleAndComposer, "document: title and composer of a score");
     REGISTER (testDocumentRoundTrip, "document: save and load round trip");
     REGISTER (testEmptyDocumentRoundTrip, "document: empty round trip");
     REGISTER (testLoadRejectsDamagedState, "document: damaged state is rejected");

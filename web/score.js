@@ -11,12 +11,16 @@
   const renderInfo = $("render-info");
 
   const zoomSteps = [50, 60, 70, 85, 100, 120, 140, 170, 200];
-  const settings = { view: "scroll", zoom: 100 };
+  // the notation size of the pages and the PDF: Verovio's scale in percent (a staff is 7.2 mm high at 100)
+  const sizes = { small: 70, medium: 85, large: 100 };
+  const settings = { view: "scroll", zoom: 100, size: "medium", margin: 15 };
 
   try {
     const saved = JSON.parse(localStorage.getItem("transcriber.scoreView") || "{}");
     if (saved.view === "pages" || saved.view === "scroll") settings.view = saved.view;
     if (zoomSteps.indexOf(saved.zoom) >= 0) settings.zoom = saved.zoom;
+    if (sizes[saved.size]) settings.size = saved.size;
+    if ([10, 15, 20].indexOf(saved.margin) >= 0) settings.margin = saved.margin;
   } catch (e) { /* no stored settings: use the defaults */ }
 
   let toolkit = null;
@@ -41,20 +45,38 @@
     $("zoom-in").disabled = settings.zoom >= zoomSteps[zoomSteps.length - 1];
   }
 
-  // Verovio's scale is a percentage; a page of `pageWidth` units is pageWidth * scale / 100 pixels wide.
-  function options() {
-    const scale = Math.max(10, Math.round(settings.zoom * 0.55));
-    const width = Math.max(200, view.clientWidth - 28 - 17);   // room for the scroll bar
-    const pageWidth = Math.floor(width * 100 / scale);
-    // "smart" with a threshold of 0: the line and page breaks of the score are kept, and a line that is too long for the window
+  // The options Verovio engraves with. "pdf" and "pages" are the same A4 page (the Pages view is the PDF, shown smaller or
+  // larger by the browser); "scroll" is one long page as wide as the window. A page of `pageWidth` units is
+  // pageWidth * scale / 100 pixels wide; one unit is a tenth of a millimetre at a scale of 100.
+  function optionsFor(kind) {
+    // "smart" with a threshold of 0: the line and page breaks of the score are kept, and a line that is too long for the page
     // is broken again (without breaks in the score it works like "auto"; "encoded" squeezed long lines together)
-    const common = { scale: scale, pageWidth: pageWidth, footer: "none", header: "none", font: "Bravura", breaks: "smart", breaksSmartSb: 0,
+    // the title and the composer are in the MEI header; without them the page has no header (and no space for one)
+    const titled = /<title>[^<]+<\/title>|<composer>/.test(mei);
+    const common = { footer: "none", header: titled ? "auto" : "none", font: "Bravura", breaks: "smart", breaksSmartSb: 0,
                      spacingSystem: layout.systemSpacing > 0 ? layout.systemSpacing : 14,
-                     spacingStaff: layout.staffSpacing > 0 ? layout.staffSpacing : 10, justifyVertically: false };
-    return settings.view === "pages"
-      ? Object.assign(common, { pageHeight: Math.floor(pageWidth * 1.4142), adjustPageHeight: false })
-      : Object.assign(common, { pageHeight: Math.max(900, Math.floor(pageWidth * 1.4)), adjustPageHeight: false });
+                     spacingStaff: layout.staffSpacing > 0 ? layout.staffSpacing : 10, justifyVertically: false, adjustPageHeight: false };
+
+    if (kind === "scroll") {
+      const scale = Math.max(10, Math.round(settings.zoom * 0.55));
+      const width = Math.max(200, view.clientWidth - 28 - 17);   // room for the scroll bar
+      const pageWidth = Math.floor(width * 100 / scale);
+      return Object.assign(common, { scale: scale, pageWidth: pageWidth, pageHeight: Math.max(900, Math.floor(pageWidth * 1.4)) });
+    }
+
+    const scale = sizes[settings.size];
+    const perMm = 1000 / scale;
+    const margin = Math.round(settings.margin * perMm);
+    return Object.assign(common, { scale: scale, pageWidth: Math.round(210 * perMm), pageHeight: Math.round(297 * perMm),
+                                   pageMarginLeft: margin, pageMarginRight: margin, pageMarginTop: margin, pageMarginBottom: margin,
+                                   mmOutput: kind === "pdf", svgViewBox: kind === "pages" });
   }
+
+  function options() { return optionsFor(settings.view === "pages" ? "pages" : "scroll"); }
+
+  // The text of the notation is set in the embedded font (DejaVu Serif) on the page and in the PDF: the same letters, with
+  // the accents of every language the user types.
+  function engraved(svg) { return svg.replace(/font-family="Times"/g, 'font-family="DejaVu Serif"'); }
 
   let renderToken = 0;
   let infoBase = "";
@@ -92,9 +114,11 @@
     holder.className = settings.view;
     holder.innerHTML = "";
 
-    // placeholders of the size of a page, so the scroll bar is right at once
-    const width = Math.round(opts.pageWidth * opts.scale / 100);
-    const height = Math.round(opts.pageHeight * opts.scale / 100);
+    // placeholders of the size of a page, so the scroll bar is right at once; the A4 pages are as wide as the window
+    // (the zoom is a part of that width) and keep their proportions
+    const fit = settings.view === "pages";
+    const width = fit ? Math.round(Math.max(200, view.clientWidth - 28 - 17) * settings.zoom / 100) : Math.round(opts.pageWidth * opts.scale / 100);
+    const height = fit ? Math.round(width * 297 / 210) : Math.round(opts.pageHeight * opts.scale / 100);
     const html = [];
     for (let p = 1; p <= pages; p++)
       html.push('<div class="sheet" data-page="' + p + '"' + ' style="width:' + width + "px;height:" + height + 'px"' + "></div>");
@@ -104,8 +128,9 @@
 
     function draw(el) {
       if (token !== renderToken || el.firstChild) return;
-      el.innerHTML = toolkit.renderToSVG(parseInt(el.dataset.page, 10));
-      el.style.width = el.style.height = "";   // the drawing sets the size
+      el.innerHTML = engraved(toolkit.renderToSVG(parseInt(el.dataset.page, 10)));
+      el.style.height = "";
+      if (!fit) el.style.width = "";   // the drawing sets the size (the A4 pages keep the width of the window)
       ++drawn;
 
       // a line that does not start at a break of the score was broken again, because it did not fit the window: say so
@@ -140,6 +165,11 @@
     showInfo();
     log("scoreRender", { measures: measures, pages: pages, loadMs: Math.round(loaded - start), totalMs: Math.round(end - start),
                          view: settings.view, zoom: settings.zoom, meiBytes: mei.length });
+  }
+
+  // for the PDF export: what is shown, and how the PDF is engraved (the same page as the Pages view)
+  function exportData() {
+    return { mei: mei, key: meiKey, options: optionsFor("pdf"), engraved: engraved };
   }
 
   function scheduleRender(delay) {
@@ -283,6 +313,29 @@
   $("zoom-in").addEventListener("click", function () { zoomBy(1); });
   $("zoom-fit").addEventListener("click", function () { settings.zoom = 100; saveSettings(); updateButtons(); scheduleRender(0); });
 
+  // the size of the notation and the margins of the pages and the PDF
+  $("pdf-size").value = settings.size;
+  $("pdf-margin").value = String(settings.margin);
+  $("pdf-size").addEventListener("change", function (e) { settings.size = e.target.value; saveSettings(); if (settings.view === "pages") scheduleRender(0); });
+  $("pdf-margin").addEventListener("change", function (e) { settings.margin = parseInt(e.target.value, 10); saveSettings(); if (settings.view === "pages") scheduleRender(0); });
+
+  // the title and the composer of the score, written above it on the page and in the PDF
+  function sendMeta() { send("setMeta", { title: $("meta-title").value, composer: $("meta-composer").value }); }
+  ["meta-title", "meta-composer"].forEach(function (id) {
+    const input = $(id);
+    input.addEventListener("change", sendMeta);
+    input.addEventListener("keydown", function (e) { if (e.key === "Enter") { input.blur(); } e.stopPropagation(); });   // the editor keys do not act while typing
+  });
+
+  on("capture", function (s) {
+    const has = s.title !== undefined;
+    ["meta-title", "meta-composer"].forEach(function (id) {
+      const input = $(id);
+      input.disabled = !has;
+      if (has && document.activeElement !== input) input.value = id === "meta-title" ? s.title : s.composer;
+    });
+  });
+
   // The window was made wider or narrower: the lines are broken again.
   window.addEventListener("resize", function () {
     if (view.clientWidth !== lastWidth) scheduleRender(250);
@@ -300,5 +353,5 @@
   });
 
   // for tests in a browser
-  window.transcriberScore = { render: render, settings: settings, selected: function () { return selectedId; }, select: select, setMei: function (m) { mei = m; showEmpty(false); render(); } };
+  window.transcriberScore = { exportData: exportData, render: render, settings: settings, selected: function () { return selectedId; }, select: select, setMei: function (m) { mei = m; showEmpty(false); render(); } };
 })();

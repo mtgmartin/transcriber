@@ -15,6 +15,7 @@ namespace
         if (ext == "mei")  return "application/xml";
         if (ext == "svg")  return "image/svg+xml";
         if (ext == "wasm") return "application/wasm";
+        if (ext == "ttf")  return "font/ttf";
         return "application/octet-stream";
     }
 
@@ -144,6 +145,7 @@ juce::WebBrowserComponent::Options TranscriberEditor::makeBrowserOptions()
         .withEventListener ("discardEdits", [this] (juce::var) { processor.getCapture().discardEdits(); })
         .withEventListener ("savePdf", [this] (juce::var data) { savePdf (data); })
         .withEventListener ("verSelect", [this] (juce::var data)    { processor.getCapture().selectVersion (data.getProperty ("id", {}).toString()); })
+        .withEventListener ("setMeta", [this] (juce::var data) { processor.getCapture().setScoreMeta (data.getProperty ("title", {}).toString(), data.getProperty ("composer", {}).toString()); })
         .withEventListener ("verRename", [this] (juce::var data)    { processor.getCapture().renameVersion (data.getProperty ("id", {}).toString(), data.getProperty ("name", {}).toString()); })
         .withEventListener ("verDuplicate", [this] (juce::var data) { processor.getCapture().duplicateVersion (data.getProperty ("id", {}).toString()); })
         .withEventListener ("verDelete", [this] (juce::var data)    { processor.getCapture().deleteVersion (data.getProperty ("id", {}).toString()); })
@@ -346,9 +348,15 @@ void TranscriberEditor::savePdf (const juce::var& payload)
         }
     }
 
-    chooser = std::make_unique<juce::FileChooser> ("Save test PDF",
+    // the file name suggested: the title of the score or the name of the take
+    auto name = juce::File::createLegalFileName (payload.getProperty ("name", {}).toString().trim().substring (0, 80));
+
+    if (name.isEmpty())
+        name = "Transcription";
+
+    chooser = std::make_unique<juce::FileChooser> ("Save the score as PDF",
                                                    juce::File::getSpecialLocation (juce::File::userDocumentsDirectory)
-                                                       .getChildFile ("Transcriber phase 1 test.pdf"),
+                                                       .getChildFile (name + ".pdf"),
                                                    "*.pdf");
 
     chooser->launchAsync (juce::FileBrowserComponent::saveMode
@@ -359,7 +367,10 @@ void TranscriberEditor::savePdf (const juce::var& payload)
         const auto file = fc.getResult();
 
         if (file == juce::File())
+        {
+            browser.emitEventIfBrowserIsVisible ("pdfSaved", makeObject ({ { "cancelled", true } }));
             return;
+        }
 
         const auto ok = file.replaceWithData (pdf->getData(), pdf->getSize());
         const auto info = makeObject ({ { "path", file.getFullPathName() },

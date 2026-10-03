@@ -24,6 +24,23 @@
       <button id="zoom-fit" type="button" title="Back to the normal size">100%</button>
       <span class="dim" id="render-info"></span>
     </div>
+    <div class="row" id="page-bar">
+      <label for="meta-title" class="dim">Title</label>
+      <input type="text" id="meta-title" maxlength="120" size="28" placeholder="(none)" title="Written above the score, on the page and in the PDF" disabled>
+      <label for="meta-composer" class="dim">Composer</label>
+      <input type="text" id="meta-composer" maxlength="120" size="20" placeholder="(none)" title="Written at the right, under the title" disabled>
+      <span class="sep"></span>
+      <label for="pdf-size" class="dim">Notation size</label>
+      <select id="pdf-size" title="The size of the notation on the pages and in the PDF (the height of a staff)">
+        <option value="small">small (5 mm)</option><option value="medium">medium (6 mm)</option><option value="large">large (7 mm)</option>
+      </select>
+      <label for="pdf-margin" class="dim">Margins</label>
+      <select id="pdf-margin" title="The white border of the pages and the PDF">
+        <option value="10">10 mm</option><option value="15">15 mm</option><option value="20">20 mm</option>
+      </select>
+      <button id="export-score-pdf" type="button" title="Saves the score as a PDF of A4 pages, laid out as the Pages view shows it" disabled>Export PDF&hellip;</button>
+    </div>
+    <p id="pdf-msg" class="result"></p>
     <div id="notation-view">
       <p id="notation-empty" class="dim">No score yet. Record something: the score appears here when the recording stops.</p>
       <div id="notation-pages"></div>
@@ -294,5 +311,6 @@
   </form>
 </div>
 <script src="edit.js"></script>
+<script src="pdf.js"></script>
 </body>
 </html>
