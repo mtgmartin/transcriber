@@ -1,7 +1,7 @@
 # Phase 7d results (Ableton Live 11.3.13, Windows 11, 3 Oct 2026)
 
 Build 0.10.0 (CI green), run by Claude in Live with `t43-edit-pages` recorded as piano from slot 9 of track 7 (read As played: 28 measures, 3 per line at the
-start). One real finding (long lines), fixed in 0.10.1 (checked in the browser harness, not yet seen in Live).
+start). One real finding (long lines), fixed in 0.10.1 and confirmed in Live (see the last section).
 
 | Test | Result | Evidence |
 |---|---|---|
@@ -33,3 +33,14 @@ start). One real finding (long lines), fixed in 0.10.1 (checked in the browser h
 - The bar numbers of the test sheet change with the window width (the program breaks lines before the first break is used); this run used bars 9 and 17 for the
   page breaks, which are line starts with 4 per line.
 - Not tried in Live: a break in a score with two voices or a pickup bar (unit-tested), the PDF (Phase 8).
+
+## Recheck with 0.10.1 (Live, same project)
+
+| Test | Result | Evidence |
+|---|---|---|
+| Break before bar 5 | **Pass** | Bars 5 and on start a line; the lines are broken as before elsewhere (bar 4 stands alone because bars 1-3 fill line 1); nothing is squeezed. The line under the toolbar says "Some lines are broken again because they do not fit the window...". |
+| 8 measures per line | **Pass** | "A line holds 8 measures."; lines of 3 measures at 140% in this window, readable, with the note. |
+| 4 measures per line | **Pass** | At 140%: 3 + 1 per group, with the note; at 100% zoom: 4 per line and the note is gone. |
+| Discard my edits, save | **Pass** | Back to the first transcription; project saved. |
+
+First attempt: the install ran before the 0.10.1 build had finished on GitHub, so 0.10.0 was installed again (squeezed line seen once more); the installed version can be read from the file properties of `Transcriber.vst3`.

@@ -513,6 +513,6 @@ Tools in `tools/live/`. Copy them to the scratchpad or run them in place.
 
 ## 9. Status (update every session)
 
-- **Done:** Phases 0-6 with their Live tests (6: `docs/phase6-results.md`). Phase 7d (page layout, build 0.10.0, 129 core tests) passed in Live except for lines between two breaks being squeezed (`docs/phase7d-results.md`); the fix is in 0.10.1 (checked in the browser harness only). Phase 7a (0.7.1), 7b (0.8.0) and 7c (0.9.0; `docs/phase7c-results.md`) passed in Live; 0.9.1 has two small dialog fixes (`docs/phase7a-results.md`): editing notes and rhythms of piano scores.
-- **Waiting on the user:** (1) install 0.10.1 (admin PowerShell, Live closed, `scripts\install.ps1`) so that I can look at the fixed lines in Live (a short check: bar 5 break, 8 per line); (2) the reference clips: about 10 clips exported from Live (.mid) with the notation you expect; (3) your own guitar riffs and basslines to confirm the tab (Phase 6 gate).
+- **Done:** Phases 0-6 with their Live tests (6: `docs/phase6-results.md`). Phase 7d (page layout, build 0.10.0, 129 core tests) passed in Live except for lines between two breaks being squeezed (`docs/phase7d-results.md`); the fix is in 0.10.1 and was confirmed in Live. Phase 7a (0.7.1), 7b (0.8.0) and 7c (0.9.0; `docs/phase7c-results.md`) passed in Live; 0.9.1 has two small dialog fixes (`docs/phase7a-results.md`): editing notes and rhythms of piano scores.
+- **Waiting on the user:** (1) the reference clips: about 10 clips exported from Live (.mid) with the notation you expect; (2) your own guitar riffs and basslines to confirm the tab (Phase 6 gate).
 - **Next:** editing for guitar, bass and drums (the second staff mirrors the first), then Phase 8 (PDF export).
