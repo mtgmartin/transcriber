@@ -73,8 +73,7 @@ foreach(style IN ITEMS "" "-Bold" "-Italic")
         ${style_var})
 endforeach()
 
-# Verovio starts its WASM runtime asynchronously
- and only calls onRuntimeInitialized if a
+# Verovio starts its WASM runtime asynchronously and only calls onRuntimeInitialized if a
 # handler is already attached; there is no "already started" flag. A handler attached by a
 # later <script> tag can therefore miss the call (seen in Live: 1 of 6 page loads). Code
 # appended to the same file runs before any async continuation, so the race cannot happen.
