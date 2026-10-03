@@ -1,6 +1,6 @@
 # Transcriber build plan
 
-Last updated 2026-10-03. **Current state: Phases 0-6 done and tested in Live (the tab still to be confirmed by the user's own riffs). Phase 7a (editing notes and rhythms, piano) passed in Live as 0.7.1; the user's reference clips are still to come.**
+Last updated 2026-10-03. **Current state: Phases 0-6 done and tested in Live (the tab still to be confirmed by the user's own riffs). Phase 7a (editing notes and rhythms, piano) passed in Live as 0.7.1, 7b (spelling, key, voices, stems, beams) is built as 0.8.0 and waits for its Live check; the user's reference clips are still to come.**
 
 Transcriber is a Windows VST3 plugin for Ableton Live 11. It records the MIDI that plays on its track,
 in Session or Arrangement View, and turns it into editable sheet music for piano, drum kit or
@@ -398,7 +398,14 @@ Full results are in `docs/phase1-results.md`.
 - `UndoManager` now holds a pointer (`rebind`) because the list of versions can move scores in memory. `CaptureService` keeps one history per version (not saved), `editScore(request)` (marks `scoreEdited`), `discardEdits()` (`Version::discardEdits` writes the score again), and the status carries `edit` {canUndo, canRedo, undoName, redoName, blocked}. While `scoreEdited` the reading, settings and instrument setters do nothing (the page greys them and offers "Discard my edits").
 - Page: `web/edit.js` (edit bar, keys, discard), `web/score.js` (`select()`, a second click on a note of a chord selects just that note, `transcriberScore.selected()`); `describeNode` says "this note: E4" for a picked chord note.
 - Tests: `tests/core/test_edit.cpp` (every operation applied and undone with an exact comparison; the steps of `docs/phase7a-tests.md` on the practice clip; 40 random takes with 60 random edits each, also in 3/4 and with pickup bars: the score stays well formed, every state undoes and redoes exactly, an edit and its opposite leave the rest of the score untouched) and the JUCE test `service: editing the score`. Fixture `t41-edit-practice` from `tools/live/make-phase7-fixtures.ps1`.
-- Not in 7a: guitar/bass/drum editing, cut/copy/paste, moving notes in time, changing the length of triplet notes, inserting or deleting measures, moving a note to another voice, spelling (7b), markings (7c), page layout (7d).
+- Not in 7a: guitar/bass/drum editing, cut/copy/paste, moving notes in time, changing the length of triplet notes, inserting or deleting measures, spelling and voices (7b, below), markings (7c), page layout (7d).
+
+**Part 7b (build 0.8.0, 123 core tests): spelling and layout of a piano score.**
+- `Edit.cpp` operations: `respell` (the next spelling with at most one accidental, e.g. C# / Db; tied notes follow, a chord changes all its notes), `key` (fifths -7..7 and minor: every note is spelled again for the key with the same rules as `pitch`, accidentals redone, root `keyFifths`/`keyTonic`/`keyMode` set; one undo step made of three `SetPropertyCommand`s and a `ReplaceChildrenCommand` in a group), `voice` (1-4: the event becomes a rest in its voice and is written in the other voice of the measure, new voices are inserted in order; refused if that voice has a note there; triplets refused), `stem` (up, down, auto, flip: property `stem`, written as `stem.dir` in MEI and named in the click sentence), `beam` (break, join, auto: properties `beamBreak` / `beamJoin`, honoured by `rebeam`).
+- `finish` now drops a voice above the first that is only a measure rest. `CaptureService` copies the key of the score back into the version after every edit (the page shows it).
+- Page: second row of the Edit bar (Spelling, Key list of 30 keys, Voice, Stem, Beam), keys J (respell) and X (turn the stem).
+- Tests: `test_edit.cpp` (respell incl. ties and chords, key change with exact undo, stems, beams, voices, the clip `t42-edit-layout` as in `docs/phase7b-tests.md`; the random edit test now also draws the new operations and checks voice order and empty voices), JUCE test `service: editing the score` (key).
+- Not in 7b: beams and stems for guitar/drums, moving a note to a voice in another measure, cross-staff notes, courtesy accidentals.
 
 Built in four parts:
 
@@ -489,6 +496,6 @@ Tools in `tools/live/`. Copy them to the scratchpad or run them in place.
 
 ## 9. Status (update every session)
 
-- **Done:** Phases 0-6 with their Live tests (6: `docs/phase6-results.md`). Phase 7a (build 0.7.1, 118 core tests) passed in Live (`docs/phase7a-results.md`): editing notes and rhythms of piano scores.
-- **Waiting on the user:** (1) the reference clips: about 10 clips exported from Live (.mid) with the notation you expect; (2) your own guitar riffs and basslines to confirm the tab (Phase 6 gate).
-- **Next:** 7b (spelling and layout: enharmonic respelling, key change, moving notes between voices), 7c (markings and text), 7d (page layout), then editing for guitar, bass and drums.
+- **Done:** Phases 0-6 with their Live tests (6: `docs/phase6-results.md`). Phase 7b code (build 0.8.0, 123 core tests): spelling, key, voices, stems, beams; its Live check is next. Phase 7a (build 0.7.1) passed in Live (`docs/phase7a-results.md`): editing notes and rhythms of piano scores.
+- **Waiting on the user:** (1) install 0.8.0 (admin PowerShell, Live closed, `scriptsinstall.ps1`); (2) the reference clips: about 10 clips exported from Live (.mid) with the notation you expect; (3) your own guitar riffs and basslines to confirm the tab (Phase 6 gate).
+- **Next:** the 7b Live check (`docs/phase7b-tests.md`, then `docs/phase7b-results.md`), then 7c (markings and text), 7d (page layout), then editing for guitar, bass and drums.

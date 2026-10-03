@@ -379,6 +379,9 @@ namespace
                 attribute (s, "pname", lowerLetter (n.prop ("step").asString()));
                 attribute (s, "oct", std::to_string (n.prop ("oct").asInt()));
 
+                if (withDuration && n.has ("stem"))
+                    attribute (s, "stem.dir", n.prop ("stem").asString());
+
                 const auto alter = (int) n.prop ("alter").asInt();
 
                 if (n.has ("accid"))
@@ -461,6 +464,8 @@ namespace
 
                 if (kind == "perc")
                     attribute (s, "stem.dir", layerNumber == 1 ? "up" : "down");
+                else if (e.has ("stem"))
+                    attribute (s, "stem.dir", e.prop ("stem").asString());
 
                 out += pad + s + ">\n";
 
@@ -648,12 +653,14 @@ std::string describeNode (const Score& score, const std::string& id)
 
         const bool drumChord = ! event->children.empty() && event->children.front().has ("drum");
         const bool tied = ! event->children.empty() && (event->children.front().prop ("tie").asString() == "i" || event->children.front().prop ("tie").asString() == "m");
-        add (value + (drumChord ? " hit " : fretted ? " chord: " : " chord ") + names + (tied ? ", tied to the next" : ""));
+        add (value + (drumChord ? " hit " : fretted ? " chord: " : " chord ") + names + (tied ? ", tied to the next" : "")
+             + (event->has ("stem") ? ", stem " + event->prop ("stem").asString() : std::string()));
     }
     else
     {
         const auto tie = event->prop ("tie").asString();
-        add (value + (event->has ("drum") ? " hit " : " note ") + pitchText (*event) + (tie == "i" || tie == "m" ? ", tied to the next note" : ""));
+        add (value + (event->has ("drum") ? " hit " : " note ") + pitchText (*event) + (tie == "i" || tie == "m" ? ", tied to the next note" : "")
+             + (event->has ("stem") ? ", stem " + event->prop ("stem").asString() : std::string()));
 
         if (event->prop ("offGrid").asBool())
             add ("was far from the grid");

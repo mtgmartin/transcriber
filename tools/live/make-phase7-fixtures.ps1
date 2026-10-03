@@ -24,3 +24,16 @@ if (Test-Path $live) {
   "Copied to $live"
 }
 Get-ChildItem $out -Filter "t41*.mid" | Select-Object Name, Length
+
+# t42-edit-layout (Phase 7b): 3 bars of 4/4, right hand only plus C3 whole notes in the left hand.
+#  bar 1: eight eighth notes C4 D4 E4 F4 G4 A4 B4 C5 (beams, voices)
+#  bar 2: F#4 G4 A#4 B4 quarters (spelling, key)
+#  bar 3: C#5 half, C#5 half (spelling of tied notes)
+$q = @()
+$pitches = @(60, 62, 64, 65, 67, 69, 71, 72)
+for ($i = 0; $i -lt 8; $i++) { $q += , @($pitches[$i], ($i * 0.5), 0.5, 95) }
+$q += , @(66, 4.0, 1.0, 100); $q += , @(67, 5.0, 1.0, 100); $q += , @(70, 6.0, 1.0, 100); $q += , @(71, 7.0, 1.0, 100)
+$q += , @(73, 8.0, 2.0, 100); $q += , @(73, 10.0, 2.0, 100)
+$q += , @(48, 0.0, 4.0, 85); $q += , @(48, 4.0, 4.0, 85); $q += , @(48, 8.0, 4.0, 85)
+Write-MidiFile (Join-Path $out "t42-edit-layout.mid") $q 12.0
+if (Test-Path $live) { Copy-Item (Join-Path $out "t42-edit-layout.mid") -Destination $live -Force }

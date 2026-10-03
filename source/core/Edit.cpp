@@ -25,7 +25,11 @@ namespace
     constexpr int lowestPitch = 21;    // A0 and C8: the range of a piano
     constexpr int highestPitch = 108;
 
-    const char* const eventKeys[] = { "onset", "ticks", "dur", "dots", "tuplet", "tupletNum", "tupletNumbase", "beam" };
+    const char* const eventKeys[] = { "onset", "ticks", "dur", "dots", "tuplet", "tupletNum", "tupletNumbase", "beam",
+                                      "stem", "beamBreak", "beamJoin" };
+
+    // The properties of a note or chord that mean nothing on a rest.
+    bool onlyForNotes (const std::string& key) { return key == "beam" || key == "stem" || key == "beamBreak" || key == "beamJoin"; }
 
     //==========================================================================
     // Note values and spelling
@@ -216,7 +220,11 @@ namespace
                 if (e.prop ("onset").asInt() >= b)
                     ++group;
 
-            if (! run.empty() && group != previousGroup)
+            // a beam is cut at the edge of a beat group, or where the user asked for it (and kept together across
+            // that edge where the user asked for that)
+            const bool cut = e.prop ("beamBreak").asBool() || (group != previousGroup && ! e.prop ("beamJoin").asBool());
+
+            if (! run.empty() && cut)
                 close();
 
             run.push_back (i);
@@ -861,7 +869,7 @@ namespace
         rest.type = nodeType::rest;
 
         for (const auto* key : eventKeys)
-            if (event.has (key) && std::string (key) != "beam")
+            if (event.has (key) && ! onlyForNotes (key))
                 rest.props[key] = event.prop (key);
 
         const auto on = event.prop ("onset").asInt();
@@ -974,12 +982,273 @@ namespace
     }
 
     //==========================================================================
+    // Spelling and layout (7b)
+
+    // The spellings of a pitch with at most one sharp or flat, the sharpest first.
+    std::vector<Spelling> spellingsOf (int midi)
+    {
+        std::vector<Spelling> out;
+
+        for (int alter = 1; alter >= -1; --alter)
+            for (const char letter : std::string ("CDEFGAB"))
+            {
+                const auto letterPc = pitchOf (letter, 0, 0) - 12;
+
+                if (((letterPc + alter) % 12 + 12) % 12 == ((midi % 12) + 12) % 12)
+                    out.push_back (spellingFor (midi, letter, alter));
+            }
+
+        return out;
+    }
+
+    // A tie joins notes of one pitch, so they are always spelled alike: the spelling follows the tie both ways.
+    void spellAlongTies (Edit& e, int pitch, const Spelling& s)
+    {
+        auto sequences = sequencesOf (e.measures);
+        auto& seq = sequences[e.layer().prop ("n").asInt (1)];
+        size_t at = 0;
+
+        while (at < seq.size() && seq[at].event != &e.event())
+            ++at;
+
+        if (at >= seq.size())
+            return;
+
+        for (size_t j = at; j < seq.size(); ++j)
+        {
+            auto* n = sameNote (*seq[j].event, pitch);
+
+            if (n == nullptr)
+                break;
+
+            setPitch (*n, pitch, s);
+
+            if (! tieNext (*n) || following (seq, j) == nullptr)
+                break;
+        }
+
+        for (size_t j = at; j > 0; --j)
+        {
+            if (following (seq, j - 1) == nullptr)
+                break;
+
+            auto* p = sameNote (*seq[j - 1].event, pitch);
+
+            if (p == nullptr || ! tieNext (*p))
+                break;
+
+            setPitch (*p, pitch, s);
+        }
+    }
+
+    EditResult respell (Edit& e)
+    {
+        if (e.event().type == nodeType::rest)
+            return fail ("A rest has no spelling.");
+
+        int changed = 0;
+
+        for (auto* n : e.targets())
+        {
+            const auto midi = midiOf (*n);
+            const auto options = spellingsOf (midi);
+
+            if (options.size() < 2)
+                continue;
+
+            size_t at = 0;
+
+            for (size_t i = 0; i < options.size(); ++i)
+                if (options[i].step == n->prop ("step").asString()[0] && options[i].alter == (int) n->prop ("alter").asInt())
+                    at = i;
+
+            const auto next = options[(at + 1) % options.size()];
+            setPitch (*n, midi, next);
+            spellAlongTies (e, midi, next);   // the tied notes before and after change with it
+            ++changed;
+        }
+
+        if (changed == 0)
+            return fail ("That pitch has only one usual spelling.");
+
+        return success ("Spelling changed.");
+    }
+
+    EditResult setStem (Edit& e, const std::string& direction)
+    {
+        auto& event = e.event();
+
+        if (event.type == nodeType::rest)
+            return fail ("A rest has no stem.");
+
+        std::string next = direction;
+
+        if (direction == "flip")
+        {
+            const auto current = event.prop ("stem").asString();
+            next = current.empty() ? "up" : current == "up" ? "down" : "auto";
+        }
+
+        if (next != "up" && next != "down" && next != "auto")
+            return fail ("The stem can point up, down or be left to the program.");
+
+        if (next == "auto")
+            event.props.erase ("stem");
+        else
+            event.props["stem"] = Json (next);
+
+        return success (next == "auto" ? "The stem is left to the program." : "The stem points " + next + ".");
+    }
+
+    EditResult setBeam (Edit& e, const std::string& mode)
+    {
+        auto& event = e.event();
+
+        if (event.type == nodeType::rest)
+            return fail ("A rest has no beam.");
+
+        if (mode != "break" && mode != "join" && mode != "auto")
+            return fail ("A beam can be broken before the note, joined to the note before, or left to the program.");
+
+        event.props.erase ("beamBreak");
+        event.props.erase ("beamJoin");
+
+        if (mode == "break")
+            event.props["beamBreak"] = Json (true);
+        else if (mode == "join")
+            event.props["beamJoin"] = Json (true);
+
+        rebeam (e.layer(), e.geometry);
+        return success (mode == "break" ? "The beam is broken before this note."
+                                        : mode == "join" ? "This note is joined to the one before it." : "The beam is left to the program.");
+    }
+
+    EditResult moveToVoice (Edit& e, int voice)
+    {
+        if (voice < 1 || voice > 4)
+            return fail ("A voice from 1 to 4 is needed.");
+
+        const auto& event = e.event();
+
+        if (event.type == nodeType::rest)
+            return fail ("Only notes and chords can move to another voice.");
+
+        if (e.layer().prop ("n").asInt (1) == voice)
+            return fail ("It is already in voice " + std::to_string (voice) + ".");
+
+        if (inTuplet (event))
+            return fail ("A note inside a triplet cannot change voice yet.");
+
+        auto slotsA = e.slots();
+        Slot moving = slotsA[e.ei];
+        const auto from = moving.on, to = moving.on + moving.len;
+
+        // the other voice of this measure, or a new one
+        auto& children = e.measure().children;
+        size_t target = children.size();
+
+        for (size_t i = 0; i < children.size(); ++i)
+            if (children[i].type == nodeType::layer && children[i].prop ("n").asInt (1) == voice)
+                target = i;
+
+        Node fresh;
+        const bool isNew = target == children.size();
+
+        if (isNew)
+        {
+            fresh = e.score.makeNode (nodeType::layer);
+            fresh.props["n"] = Json (voice);
+        }
+
+        auto slotsB = isNew ? std::vector<Slot>() : slotsOf (children[target], e.geometry);
+        std::vector<Slot> keptB;
+
+        for (auto& s : slotsB)
+        {
+            if (s.on + s.len <= from || s.on >= to)
+            {
+                keptB.push_back (std::move (s));
+                continue;
+            }
+
+            if (s.node.type != nodeType::rest || inTuplet (s.node))
+                return fail ("Voice " + std::to_string (voice) + " has a note there already.");
+
+            // only the part of the rest outside the moved note stays a rest
+            if (s.on < from)
+            {
+                Slot before;
+                before.on = s.on;
+                before.len = from - s.on;
+                before.node.type = nodeType::rest;
+                before.node.id = s.node.id;
+                keptB.push_back (std::move (before));
+            }
+
+            if (s.on + s.len > to)
+            {
+                Slot after;
+                after.on = to;
+                after.len = s.on + s.len - to;
+                after.node.type = nodeType::rest;
+                keptB.push_back (std::move (after));
+            }
+        }
+
+        keptB.push_back (std::move (moving));
+
+        // where the note was, a rest stays
+        slotsA[e.ei].node = Node();
+        slotsA[e.ei].node.type = nodeType::rest;
+
+        const auto layerA = e.li;
+        const auto movedId = e.event().id;
+
+        if (! writeLayer (e.score, e.measure().children[layerA], e.geometry, std::move (slotsA)))
+            return fail ("The measure could not be written again.");
+
+        if (isNew)
+        {
+            if (! writeLayer (e.score, fresh, e.geometry, std::move (keptB)))
+                return fail ("The measure could not be written again.");
+
+            size_t at = 0;
+
+            for (size_t i = 0; i < children.size(); ++i)
+                if (children[i].type == nodeType::layer && children[i].prop ("n").asInt (1) < voice)
+                    at = i + 1;
+
+            children.insert (children.begin() + (std::ptrdiff_t) at, std::move (fresh));
+        }
+        else if (! writeLayer (e.score, children[target], e.geometry, std::move (keptB)))
+        {
+            return fail ("The measure could not be written again.");
+        }
+
+        // a voice above the first that is only rest is not written
+        children.erase (std::remove_if (children.begin(), children.end(), [] (const Node& n)
+        {
+            return n.type == nodeType::layer && n.prop ("n").asInt (1) > 1 && n.children.size() == 1
+                   && n.children.front().type == nodeType::rest && n.children.front().prop ("measureRest").asBool();
+        }), children.end());
+
+        return success ("Moved to voice " + std::to_string (voice) + ".", movedId);
+    }
+
     EditResult finish (Edit& e, UndoManager& undo, const std::string& name, EditResult result)
     {
         if (! result.ok)
             return result;
 
         normaliseTies (e.measures);
+
+        // a voice above the first that is only rest is not written
+        for (auto& m : e.measures)
+            m.children.erase (std::remove_if (m.children.begin(), m.children.end(), [] (const Node& n)
+            {
+                return n.type == nodeType::layer && n.prop ("n").asInt (1) > 1 && n.children.size() == 1
+                       && n.children.front().type == nodeType::rest && n.children.front().prop ("measureRest").asBool();
+            }), m.children.end());
 
         for (auto& m : e.measures)
             detail::refreshAccidentals (m, e.fifths);
@@ -998,10 +1267,86 @@ namespace
 
         return result;
     }
+    // A new key signature for the whole score: every note is spelled for it again (pitches stay), the accidentals
+    // are worked out again. One undo step.
+    EditResult changeKey (Score& score, UndoManager& undo, int fifths, bool minor)
+    {
+        if (fifths < -7 || fifths > 7)
+            return fail ("A key has at most seven sharps or flats.");
+
+        const Node* part = nullptr;
+
+        for (const auto& c : score.root().children)
+            if (c.type == nodeType::part)
+                part = &c;
+
+        std::vector<ReplaceChildrenCommand::Change> changes;
+
+        for (const auto& staff : part->children)
+        {
+            auto measures = staff.children;
+
+            for (size_t i = 0; i < measures.size(); ++i)
+            {
+                std::vector<Node*> stack;
+
+                for (auto& layer : measures[i].children)
+                    if (layer.type == nodeType::layer)
+                        stack.push_back (&layer);
+
+                while (! stack.empty())
+                {
+                    auto* n = stack.back();
+                    stack.pop_back();
+
+                    if (n->type == nodeType::note)
+                        setPitch (*n, midiOf (*n), spell (midiOf (*n), fifths));
+
+                    for (auto& c : n->children)
+                        stack.push_back (&c);
+                }
+
+                detail::refreshAccidentals (measures[i], fifths);
+
+                if (! sameNodes (measures[i].children, staff.children[i].children))
+                    changes.push_back ({ measures[i].id, measures[i].children });
+            }
+        }
+
+        const auto& root = score.root();
+        const int majorTonic = ((fifths * 7) % 12 + 12) % 12;
+        const int tonic = minor ? (majorTonic + 9) % 12 : majorTonic;
+        const std::string mode = minor ? "minor" : "major";
+        const bool same = root.prop ("keyFifths").asInt() == fifths && root.prop ("keyTonic").asInt() == tonic && root.prop ("keyMode").asString() == mode;
+
+        if (changes.empty() && same)
+            return fail ("The score is in that key already.");
+
+        undo.beginGroup ("Change key");
+
+        bool ok = true;
+        ok = ok && undo.perform (std::make_unique<SetPropertyCommand> (root.id, "keyFifths", Json (fifths), "Change key"));
+        ok = ok && undo.perform (std::make_unique<SetPropertyCommand> (root.id, "keyTonic", Json (tonic), "Change key"));
+        ok = ok && undo.perform (std::make_unique<SetPropertyCommand> (root.id, "keyMode", Json (mode), "Change key"));
+
+        if (ok && ! changes.empty())
+            ok = undo.perform (std::make_unique<ReplaceChildrenCommand> (std::move (changes), "Change key"));
+
+        undo.endGroup();
+
+        if (! ok)
+        {
+            undo.undo();
+            return fail ("The change did not fit the score.");
+        }
+
+        return success ("The key is changed.");
+    }
 }
 
 //==============================================================================
-std::string editBlocker (const Score& score)
+std::string editBlocker
+ (const Score& score)
 {
     const Node* part = nullptr;
 
@@ -1037,6 +1382,9 @@ EditResult performEdit (Score& score, UndoManager& undo, const Json& request)
     if (const auto blocked = editBlocker (score); ! blocked.empty())
         return fail (blocked);
 
+    if (op == "key")
+        return changeKey (score, undo, (int) request.get ("fifths").asInt(), request.get ("minor").asBool());
+
     Edit e (score);
 
     if (! locate (e, request.get ("id").asString()))
@@ -1065,6 +1413,18 @@ EditResult performEdit (Score& score, UndoManager& undo, const Json& request)
 
     if (op == "tie")
         return finish (e, undo, "Tie", toggleTie (e));
+
+    if (op == "respell")
+        return finish (e, undo, "Change spelling", respell (e));
+
+    if (op == "stem")
+        return finish (e, undo, "Stem direction", setStem (e, request.get ("dir").asString()));
+
+    if (op == "beam")
+        return finish (e, undo, "Beam", setBeam (e, request.get ("mode").asString()));
+
+    if (op == "voice")
+        return finish (e, undo, "Change voice", moveToVoice (e, (int) request.get ("voice").asInt()));
 
     return fail ("Unknown edit \"" + op + "\".");
 }

@@ -57,11 +57,31 @@
       </select>
       <button type="button" data-op="interval" title="Adds a note above the top note, so that it becomes a chord" disabled>Add</button>
     </div>
+    <div class="row" id="edit-bar2">
+      <span class="dim">Spelling</span>
+      <button type="button" data-op="respell" title="The same pitch written the other way, e.g. C sharp / D flat (J)" disabled>C&#9839; / D&#9837;</button>
+      <label for="ed-key" class="dim">Key</label>
+      <select id="ed-key" title="Writes the whole score in another key: the notes are spelled for it again" disabled></select>
+      <span class="sep"></span>
+      <span class="dim">Voice</span>
+      <button type="button" data-op="voice" data-voice="1" title="Move the note to voice 1" disabled>1</button>
+      <button type="button" data-op="voice" data-voice="2" title="Move the note to voice 2 (stems down)" disabled>2</button>
+      <span class="sep"></span>
+      <span class="dim">Stem</span>
+      <button type="button" data-op="stem" data-dir="auto" title="The program decides" disabled>Auto</button>
+      <button type="button" data-op="stem" data-dir="up" title="Stem up" disabled>Up</button>
+      <button type="button" data-op="stem" data-dir="down" title="Stem down" disabled>Down</button>
+      <span class="sep"></span>
+      <span class="dim">Beam</span>
+      <button type="button" data-op="beam" data-mode="break" title="Start a new beam at this note" disabled>Break</button>
+      <button type="button" data-op="beam" data-mode="join" title="Join this note to the one before it" disabled>Join</button>
+      <button type="button" data-op="beam" data-mode="auto" title="The program decides" disabled>Auto</button>
+    </div>
     <p id="edit-msg" class="result"></p>
     <p id="edited-note" class="dim" hidden>You have edited this score, so the reading and the notation settings are locked.
        <button id="discard-edits" type="button">Discard my edits</button></p>
     <p id="selection-info" class="dim">Click a note or a rest to see what it is.</p>
-    <p class="dim" id="edit-help">Keys: arrows change the pitch, A to G enter a note, 2 to 7 set the length, T ties, Delete makes a rest, Ctrl+Z undoes.
+    <p class="dim" id="edit-help">Keys: arrows change the pitch, A to G enter a note, 2 to 7 set the length, T ties, J writes the pitch the other way, X turns the stem, Delete makes a rest, Ctrl+Z undoes.
        Click a chord, then one of its notes, to select just that note.</p>
   </section>
 

@@ -118,6 +118,12 @@ namespace
                         if (layer.type != nodeType::layer)
                             continue;
 
+                        if (layer.prop ("n").asInt() < 1)
+                            return "a voice number below 1";
+
+                        if (layer.prop ("n").asInt() > 1 && layer.children.size() == 1 && layer.children.front().prop ("measureRest").asBool())
+                            return "an empty voice above the first";
+
                         int64_t at = 0;
                         std::map<std::string, int> beamed;
 
@@ -594,6 +600,174 @@ static void testBlocked()
 REGISTER (testBlocked, "edit: guitar, bass and drum scores are refused");
 
 //==============================================================================
+// Phase 7b: spelling and layout.
+
+#include "core/Mei.h"
+
+static void testRespell()
+{
+    Session s (pianoScore ({ { p ("C#4"), 0, 1 }, { p ("E4"), 1, 1 }, { p ("D4"), 2, 1 } }, 4.0, 0));
+    CHECK_STR (right (s.score).c_str(), "m1 C#4!/4 E4/4 D4/4 r/4");
+
+    auto r = s.run (req ("respell", idOf (s.score, 0)));
+    CHECK (r.ok);
+    CHECK_STR (right (s.score).c_str(), "m1 Db4!/4 E4/4 D4!/4 r/4");   // the D needs a natural after the D flat
+    CHECK (s.run (req ("respell", idOf (s.score, 0))).ok);
+    CHECK_STR (right (s.score).c_str(), "m1 C#4!/4 E4/4 D4/4 r/4");
+
+    // a white key has an unusual spelling too; D has none with one accidental
+    CHECK (s.run (req ("respell", idOf (s.score, 1))).ok);
+    CHECK_STR (right (s.score).c_str(), "m1 C#4!/4 Fb4!/4 D4/4 r/4");
+    CHECK (! s.run (req ("respell", idOf (s.score, 2))).ok);
+    CHECK (! s.run (req ("respell", idOf (s.score, 3))).ok);   // a rest
+
+    // tied notes are spelled alike
+    Session t (pianoScore ({ { p ("C#4"), 0, 1 }, { p ("C#4"), 1, 1 }, { p ("C#4"), 2, 1 } }, 4.0, 0));
+    CHECK (t.run (req ("tie", idOf (t.score, 0))).ok);
+    CHECK (t.run (req ("tie", idOf (t.score, 1))).ok);
+    CHECK (t.run (req ("respell", idOf (t.score, 1))).ok);
+    CHECK_STR (right (t.score).c_str(), "m1 C#4!/4~ C#4/4~ C#4/4 r/4");   // the take was spelled with flats; all three change
+
+    // a chord: every note changes
+    Session c (pianoScore ({ { p ("C#4"), 0, 1 }, { p ("F#4"), 0, 1 } }, 4.0, 0));
+    CHECK (c.run (req ("respell", idOf (c.score, 0))).ok);
+    CHECK_STR (right (c.score).c_str(), "m1 [C#4! F#4!]/4 r/4 r/2");
+}
+REGISTER (testRespell, "edit: other spelling of a pitch, tied notes together");
+
+static void testChangeKey()
+{
+    Session s (pianoScore ({ { p ("F#4"), 0, 1 }, { p ("G4"), 1, 1 }, { p ("Bb4"), 2, 1 }, { p ("C#5"), 3, 1 } }, 4.0, 0));
+    CHECK_STR (right (s.score).c_str(), "m1 Gb4!/4 G4!/4 Bb4!/4 Db5!/4");
+
+    Json k = Json::object();
+    k.set ("op", "key");
+    k.set ("fifths", 1);
+    k.set ("minor", false);
+    CHECK (s.run (k).ok);
+    CHECK_EQ ((int) s.score.root().prop ("keyFifths").asInt(), 1);
+    CHECK_EQ ((int) s.score.root().prop ("keyTonic").asInt(), 7);
+    CHECK_STR (s.score.root().prop ("keyMode").asString().c_str(), "major");
+    CHECK_STR (right (s.score).c_str(), "m1 F#4/4 G4/4 A#4!/4 C#5!/4");   // F sharp is in G major now
+
+    // flats: the same pitches spelled with flats
+    k.set ("fifths", -3);
+    k.set ("minor", true);   // C minor
+    CHECK (s.run (k).ok);
+    CHECK_EQ ((int) s.score.root().prop ("keyTonic").asInt(), 0);
+    CHECK_STR (s.score.root().prop ("keyMode").asString().c_str(), "minor");
+    CHECK_STR (right (s.score).c_str(), "m1 Gb4!/4 G4!/4 Bb4/4 Db5!/4");
+
+    // the key signature is in the MEI
+    CHECK (scoreToMei (s.score, {}).find ("keysig=\"3f\"") != std::string::npos);
+
+    // nothing to do, and out of range
+    CHECK (! s.run (k).ok);
+    k.set ("fifths", 9);
+    CHECK (! s.run (k).ok);
+
+    // the keys of a take of several bars keep the bars as they are
+    Session many (pianoScore ({ { p ("E4"), 0, 1 }, { p ("F4"), 4, 1 }, { p ("A#4"), 8, 1 } }, 12.0, 0));
+    k.set ("fifths", 2);
+    k.set ("minor", false);
+    CHECK (many.run (k).ok);
+    CHECK (problems (many.score).empty());
+}
+REGISTER (testChangeKey, "edit: a new key respells the whole score and undoes in one step");
+
+static void testStemAndBeam()
+{
+    Session s (pianoScore ({ { p ("C4"), 0, 0.5 }, { p ("D4"), 0.5, 0.5 }, { p ("E4"), 1, 0.5 }, { p ("F4"), 1.5, 0.5 } }, 4.0, 0));
+    CHECK_STR (right (s.score).c_str(), "m1 ( C4/8 D4/8 ) ( E4/8 F4/8 ) r/2");
+
+    // stems
+    auto j = req ("stem", idOf (s.score, 0));
+    j.set ("dir", "down");
+    CHECK (s.run (j).ok);
+    CHECK_STR (events (s.score)[0]->prop ("stem").asString().c_str(), "down");
+    CHECK (scoreToMei (s.score, {}).find ("stem.dir=\"down\"") != std::string::npos);
+    CHECK (describeNode (s.score, idOf (s.score, 0)).find ("stem down") != std::string::npos);
+    j.set ("dir", "auto");
+    CHECK (s.run (j).ok);
+    CHECK (! events (s.score)[0]->has ("stem"));
+    j.set ("dir", "flip");
+    CHECK (s.run (j).ok);
+    CHECK_STR (events (s.score)[0]->prop ("stem").asString().c_str(), "up");
+    CHECK (s.run (j).ok);
+    CHECK_STR (events (s.score)[0]->prop ("stem").asString().c_str(), "down");
+    CHECK (s.run (j).ok);
+    CHECK (! events (s.score)[0]->has ("stem"));
+    j.set ("dir", "sideways");
+    CHECK (! s.run (j).ok);
+    CHECK (! s.run (req ("stem", idOf (s.score, 4))).ok);   // a rest
+
+    // beams: join across the beat, break inside it
+    auto b = req ("beam", idOf (s.score, 2));
+    b.set ("mode", "join");
+    CHECK (s.run (b).ok);
+    CHECK_STR (right (s.score).c_str(), "m1 ( C4/8 D4/8 E4/8 F4/8 ) r/2");
+    CHECK (s.undo.undo());
+
+    b = req ("beam", idOf (s.score, 1));
+    b.set ("mode", "break");
+    CHECK (s.run (b).ok);
+    CHECK_STR (right (s.score).c_str(), "m1 C4/8 D4/8 ( E4/8 F4/8 ) r/2");
+    b.set ("mode", "auto");
+    CHECK (s.run (b).ok);
+    CHECK_STR (right (s.score).c_str(), "m1 ( C4/8 D4/8 ) ( E4/8 F4/8 ) r/2");
+    b.set ("mode", "nonsense");
+    CHECK (! s.run (b).ok);
+
+    // the beam choice survives an edit of the same voice
+    b = req ("beam", idOf (s.score, 2));
+    b.set ("mode", "join");
+    CHECK (s.run (b).ok);
+    CHECK (s.run (req ("pitch", idOf (s.score, 0), "semitones", 2)).ok);
+    CHECK_STR (right (s.score).c_str(), "m1 ( D4/8 D4/8 E4/8 F4/8 ) r/2");
+}
+REGISTER (testStemAndBeam, "edit: stem direction, beam break and join");
+
+static void testVoices()
+{
+    Session s (pianoScore ({ { p ("C4"), 0, 1 }, { p ("D4"), 1, 1 }, { p ("E4"), 2, 1 }, { p ("F4"), 3, 1 } }, 4.0, 0));
+    const Score original = s.score;
+
+    // E4 into voice 2: voice 1 keeps a rest there
+    const auto e4 = idOf (s.score, 2);
+    auto j = req ("voice", e4, "voice", 2);
+    auto r = s.run (j);
+    CHECK (r.ok);
+    CHECK_STR (r.select.c_str(), e4.c_str());
+    const auto text = dumpScore (s.score);
+    CHECK (text.find ("S1 v1: C4/4 D4/4 r/4 F4/4") != std::string::npos);
+    CHECK (text.find ("S1 v2: r/2 E4/4 r/4") != std::string::npos);
+    CHECK (problems (s.score).empty());
+
+    // another note into voice 2: it joins the first; a note over the first is refused
+    const auto c4 = idOf (s.score, 0);
+    auto second = req ("voice", c4, "voice", 2);
+    CHECK (s.run (second).ok);
+    CHECK (dumpScore (s.score).find ("S1 v2: C4/4 r/4 E4/4 r/4") != std::string::npos);
+
+    // back to voice 1: an empty voice 2 disappears and the score is as it was
+    CHECK (s.undo.undo());
+    CHECK (s.run (req ("voice", e4, "voice", 1)).ok);
+    CHECK_STR (dumpScore (s.score).c_str(), dumpScore (original).c_str());
+    CHECK (dumpScore (s.score).find ("v2") == std::string::npos);
+
+    // a voice that has a note there already
+    CHECK (s.run (req ("voice", idOf (s.score, 1), "voice", 2)).ok);          // D4 into voice 2
+    const auto f4 = idOf (s.score, 3);                                          // F4 in voice 1
+    CHECK (s.run (req ("voice", f4, "voice", 2)).ok);                           // F4 next to it: free
+    CHECK (s.run (req ("duration", idOf (s.score, 5), "dur", 2)).ok);           // lengthen the D4 of voice 2 over the F4: taken out
+
+    // the same voice, a voice that does not exist, a rest
+    CHECK (! s.run (req ("voice", idOf (s.score, 0), "voice", 1)).ok);
+    CHECK (! s.run (req ("voice", idOf (s.score, 0), "voice", 7)).ok);
+}
+REGISTER (testVoices, "edit: move a note to another voice and back");
+
+//==============================================================================
 // Random edits on random takes: the score stays well formed, every step undoes and redoes exactly,
 // and measures that were not touched stay as they were.
 static void testRandomEdits()
@@ -646,7 +820,7 @@ static void testRandomEdits()
                 id = target->children[rng() % target->children.size()].id;
 
             Json j = Json::object();
-            const auto kind = rng() % 7;
+            const auto kind = rng() % 12;
 
             switch (kind)
             {
@@ -656,7 +830,12 @@ static void testRandomEdits()
                 case 3: j = req ("delete", id); break;
                 case 4: j = req ("letter", id); j.set ("letter", std::string (1, "ABCDEFG"[rng() % 7])); break;
                 case 5: j = req ("interval", id, "interval", 2 + (int) (rng() % 7)); break;
-                default: j = req ("tie", id); break;
+                case 6: j = req ("tie", id); break;
+                case 7: j = req ("respell", id); break;
+                case 8: j = req ("stem", id); j.set ("dir", std::string (rng() % 3 == 0 ? "up" : rng() % 2 == 0 ? "down" : rng() % 2 == 0 ? "auto" : "flip")); break;
+                case 9: j = req ("beam", id); j.set ("mode", std::string (rng() % 3 == 0 ? "break" : rng() % 2 == 0 ? "join" : "auto")); break;
+                case 10: j = req ("voice", id, "voice", 1 + (int) (rng() % 3)); break;
+                default: j = Json::object(); j.set ("op", "key"); j.set ("fifths", (int) (rng() % 15) - 7); j.set ("minor", rng() % 2 == 0); break;
             }
 
             const Score before = s.score;
@@ -812,4 +991,50 @@ static void testPracticeClip()
     CHECK (right (s.score).find ("| m3 [C4 E4]/1") != std::string::npos);
 }
 REGISTER (testPracticeClip, "edit: the practice clip of the Live test sheet");
+#endif
+
+#ifdef TRANSCRIBER_FIXTURES_DIR
+// The layout practice clip of the 7b test sheet (the key set to C major first, as the sheet says).
+static void testLayoutClip()
+{
+    const auto file = midireader::read (std::string (TRANSCRIBER_FIXTURES_DIR) + "/t42-edit-layout.mid");
+    CHECK (file.ok);
+    TranscriptionSettings settings;
+    settings.keyTonic = 0;
+    Session s (transcribePiano (file.capture, settings).score);
+    CHECK (startsWith (right (s.score), "m1 ( C4/8 D4/8 ) ( E4/8 F4/8 ) ( G4/8 A4/8 ) ( B4/8 C5/8 ) | m2 F#4!/4 G4/4 Bb4!/4 B4!/4 | m3 Db5!/2 Db5/2"));
+
+    // beams: E4 joined to the first group
+    auto join = req ("beam", idOf (s.score, 2));
+    join.set ("mode", "join");
+    CHECK (s.run (join).ok);
+    CHECK (startsWith (right (s.score), "m1 ( C4/8 D4/8 E4/8 F4/8 ) ( G4/8 A4/8 ) ( B4/8 C5/8 )"));
+    CHECK (s.undo.undo());
+
+    // spelling: F#4 of bar 2 other way, then the key of G major
+    CHECK (s.run (req ("respell", idOf (s.score, 8))).ok);
+    CHECK (right (s.score).find ("| m2 Gb4!/4 G4!/4 Bb4!/4 B4!/4") != std::string::npos);
+    CHECK (s.undo.undo());
+    Json key = Json::object();
+    key.set ("op", "key");
+    key.set ("fifths", 1);
+    key.set ("minor", false);
+    CHECK (s.run (key).ok);
+    CHECK (right (s.score).find ("| m2 F#4/4 G4/4 A#4!/4 B4/4") != std::string::npos);
+
+    // voice and stem
+    auto voice = req ("voice", idOf (s.score, 6), "voice", 2);
+    CHECK (s.run (voice).ok);
+    CHECK (dumpScore (s.score).find ("S1 v2:") != std::string::npos);
+    auto stem = req ("stem", idOf (s.score, 0));
+    stem.set ("dir", "down");
+    CHECK (s.run (stem).ok);
+
+    // the two C# of bar 3: tied, then written the other way together
+    CHECK (s.run (req ("tie", idOf (s.score, events (s.score).size() - 2))).ok);
+    CHECK (s.run (req ("respell", idOf (s.score, events (s.score).size() - 2))).ok);
+    CHECK (right (s.score).find ("| m3 Db5") != std::string::npos);
+    CHECK (problems (s.score).empty());
+}
+REGISTER (testLayoutClip, "edit: the layout practice clip of the 7b test sheet");
 #endif

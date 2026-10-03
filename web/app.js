@@ -301,11 +301,11 @@ function showTranscription(s) {
     lines.push("Drums · " + measures + (t.voices > 1 ? " · hands and feet in two voices" : "") + edited);
   } else if (instrument === "piano") {
     lines.push("Key: " + keyName(t.keyFifths, t.keyMinor) + " (" + signatureText(t.keyFifths) + ")" +
-               (cfg.keyTonic < 0 ? ", detected" : ", set by you") + " · " + measures +
+               (t.edited ? "" : cfg.keyTonic < 0 ? ", detected" : ", set by you") + " · " + measures +
                " · up to " + t.voices + " voice" + (t.voices === 1 ? "" : "s") + " in a hand" + edited);
   } else {
     lines.push((instrument === "bass" ? "Bass" : "Guitar") + " with tab · key: " + keyName(t.keyFifths, t.keyMinor) +
-               (cfg.keyTonic < 0 ? ", detected" : ", set by you") + " · " + measures + edited);
+               (t.edited ? "" : cfg.keyTonic < 0 ? ", detected" : ", set by you") + " · " + measures + edited);
   }
   // the notes missing from a drum map are shown with the map
   t.warnings.forEach(function (w) { if (!(instrument === "drums" && w.indexOf("not in the drum map") >= 0)) lines.push("Note: " + w); });

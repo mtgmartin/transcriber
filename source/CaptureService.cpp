@@ -655,6 +655,14 @@ juce::var CaptureService::editScore (const juce::var& request)
     if (result.ok && json.get ("op").asString() != "undo" && json.get ("op").asString() != "redo")
         v->scoreEdited = true;
 
+    if (result.ok)   // the key of the score is what the page shows (a key change, or its undo)
+    {
+        const auto& root = v->score.root();
+        v->key.fifths = (int) root.prop ("keyFifths").asInt();
+        v->key.tonic = (int) root.prop ("keyTonic").asInt();
+        v->key.minor = root.prop ("keyMode").asString() == "minor";
+    }
+
     o->setProperty ("ok", result.ok);
     o->setProperty ("message", juce::String::fromUTF8 (result.message.c_str()));
     o->setProperty ("select", juce::String::fromUTF8 (result.select.c_str()));

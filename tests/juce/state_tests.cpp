@@ -594,6 +594,20 @@ namespace
         CHECK (result.getProperty ("message", {}).toString().isNotEmpty());
         CHECK_STR (service.getStatus().getProperty ("scoreText", {}).toString().toRawUTF8(), edited.toRawUTF8());
 
+        // a new key: the status shows it, undo takes it back
+        {
+            auto* k = new juce::DynamicObject();
+            k->setProperty ("op", "key");
+            k->setProperty ("fifths", 2);
+            k->setProperty ("minor", false);
+            CHECK ((bool) service.editScore (juce::var (k)).getProperty ("ok", false));
+            CHECK_EQ ((int) service.getStatus().getProperty ("transcription", {}).getProperty ("keyFifths", 99), 2);
+            CHECK ((bool) service.editScore (editRequest ("undo", {})).getProperty ("ok", false));
+            CHECK_STR (service.getStatus().getProperty ("scoreText", {}).toString().toRawUTF8(), edited.toRawUTF8());
+            CHECK_EQ ((int) service.getStatus().getProperty ("transcription", {}).getProperty ("keyFifths", 99),
+                      (int) status.getProperty ("transcription", {}).getProperty ("keyFifths", 98));
+        }
+
         // the edit is saved with the document and comes back as it was
         juce::MemoryBlock saved;
         service.saveState (saved);
