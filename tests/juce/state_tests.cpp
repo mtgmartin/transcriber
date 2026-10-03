@@ -682,6 +682,73 @@ namespace
         CHECK (service.getStatus().getProperty ("edit", {}).getProperty ("blocked", {}).toString().isEmpty());
     }
 
+
+    // the ids of the notes of the MEI, in order (a chord has none of its own that are plain notes: its notes count)
+    juce::StringArray noteIdsOf (const juce::String& mei)
+    {
+        juce::StringArray ids;
+
+        for (int from = 0;;)
+        {
+            const auto at = mei.indexOf (from, "<note xml:id=\"");
+
+            if (at < 0)
+                break;
+
+            ids.add (mei.substring (at + 14).upToFirstOccurrenceOf ("\"", false, false));
+            from = at + 14;
+        }
+
+        return ids;
+    }
+
+    void testSelecting()
+    {
+        CaptureService service;
+        record (service, 4, 0);
+        CHECK (waitForVersions (service, 1));
+
+        const auto ids = noteIdsOf (service.getMei().getProperty ("mei", {}).toString());
+        CHECK (ids.size() >= 3);
+
+        // a selection changes nothing: the score is not edited, there is nothing to undo, and the answer has the ids
+        auto selected = service.editScore (editRequest ("selectAll", ids[0]));
+        CHECK ((bool) selected.getProperty ("ok", false));
+        CHECK ((bool) selected.getProperty ("readOnly", false));
+        CHECK (selected.getProperty ("selection", {}).size() >= 3);
+        auto status = service.getStatus();
+        CHECK (! (bool) status.getProperty ("transcription", {}).getProperty ("edited", true));
+        CHECK (! (bool) status.getProperty ("edit", {}).getProperty ("canUndo", true));
+
+        // the same pitch: a list of ids comes back (the ids sent with the request are the measures to look in)
+        selected = service.editScore (editRequest ("selectSame", ids[0]));
+        CHECK ((bool) selected.getProperty ("ok", false));
+        CHECK (selected.getProperty ("selection", {}).size() >= 1);
+
+        // an edit of several notes: the answer says which are selected, and the score is edited once
+        auto* o = new juce::DynamicObject();
+        o->setProperty ("op", "pitch");
+        o->setProperty ("id", ids[0]);
+        o->setProperty ("semitones", 1);
+        juce::Array<juce::var> list;
+        list.add (ids[0]);
+        list.add (ids[1]);
+        list.add (ids[2]);
+        o->setProperty ("ids", list);
+        auto result = service.editScore (juce::var (o));
+        CHECK ((bool) result.getProperty ("ok", false));
+        CHECK ((bool) ! (bool) result.getProperty ("readOnly", true));
+        CHECK_EQ ((int) result.getProperty ("selection", {}).size(), 3);
+        CHECK_STR (result.getProperty ("select", {}).toString().toRawUTF8(), ids[0].toRawUTF8());
+        status = service.getStatus();
+        CHECK ((bool) status.getProperty ("transcription", {}).getProperty ("edited", false));
+        CHECK_STR (status.getProperty ("edit", {}).getProperty ("undoName", {}).toString().toRawUTF8(), "Change pitch");
+
+        // one undo takes back all three
+        CHECK ((bool) service.editScore (editRequest ("undo", {})).getProperty ("ok", false));
+        CHECK (! (bool) service.getStatus().getProperty ("edit", {}).getProperty ("canUndo", true));
+    }
+
     struct Test { const char* name; void (*fn)(); };
 
 
@@ -698,6 +765,7 @@ namespace
         { "service: instruments and drum maps", testInstrumentsAndDrumMaps },
         { "service: title and composer", testTitleAndComposer },
         { "service: editing the score", testEditing },
+        { "service: selecting several notes", testSelecting },
     };
 }
 

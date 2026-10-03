@@ -122,3 +122,6 @@ button.danger { background: #5a2323; border-color: #f08a8a; }
 #page-bar .sep { width: 1px; align-self: stretch; background: var(--rule); margin: 0 4px; }
 #pdf-msg:empty { display: none; }
 #notation-pages.pages .sheet svg { width: 100%; height: auto; }
+
+/* the rectangle dragged over the page to select notes */
+.marquee { position: fixed; z-index: 20; pointer-events: none; border: 1px dashed var(--accent); background: rgba(120, 170, 255, 0.12); }

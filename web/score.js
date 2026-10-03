@@ -29,7 +29,9 @@
   let meiKey = "";         // which score it is (version and revision)
   let wantedKey = "";      // the key the plugin has announced
   let asked = "";          // the key we asked for
-  let selectedId = "";
+  let selectedId = "";     // the primary selected note (the last one clicked): the edit bar and the sentence under the score are about it
+  let selection = [];      // every selected note or chord, in the order they were selected; with one note it is [selectedId]
+  let wantedPrimary = "";  // the note a range ends at, until the answer for it arrives
   let renderTimer = null;
   let lastWidth = 0;
 
@@ -271,12 +273,21 @@
     asked = "";
     if (!m.key) { noteKey(""); return; }
     // another version: start at the top; the same version drawn again (zoom, settings): stay where you are
-    if (m.key.split("#")[0] !== meiKey.split("#")[0]) { view.scrollTop = 0; view.scrollLeft = 0; selectedId = ""; info.textContent = "Click a note or a rest to see what it is."; }
-    // a selected note that is not in the new score (another instrument, other settings) is let go
-    if (selectedId && m.mei.indexOf('xml:id="' + selectedId + '"') < 0) {
-      selectedId = "";
-      info.textContent = "Click a note or a rest to see what it is.";
-      window.dispatchEvent(new Event("transcriber-selection"));
+    if (m.key.split("#")[0] !== meiKey.split("#")[0]) { view.scrollTop = 0; view.scrollLeft = 0; selectedId = ""; selection = []; info.textContent = "Click a note or a rest to see what it is."; }
+    // selected notes that are not in the new score (another instrument, other settings, a note made longer) are let go
+    if (selectedId) {
+      const present = new Set();
+      const idRe = /xml:id="([^"]+)"/g;
+      let found;
+      while ((found = idRe.exec(m.mei))) present.add(found[1]);
+      const kept = selection.filter(function (id) { return present.has(id); });
+
+      if (kept.length !== selection.length || !present.has(selectedId)) {
+        selection = kept;
+        selectedId = kept.length ? (kept.indexOf(selectedId) >= 0 ? selectedId : kept[kept.length - 1]) : "";
+        if (!selectedId) info.textContent = "Click a note or a rest to see what it is.";
+        window.dispatchEvent(new Event("transcriber-selection"));
+      }
     }
     meiKey = m.key;
     mei = m.mei;
@@ -291,10 +302,10 @@
   // ---- clicks ----
   function applySelection(announce) {
     holder.querySelectorAll(".selected").forEach(function (el) { el.classList.remove("selected"); });
-    if (!selectedId) return;
-    const el = holder.querySelector('[id="' + selectedId.replace(/"/g, '\\"') + '"]');
-    if (el) el.classList.add("selected");
-    else if (announce) selectedId = "";
+    selection.forEach(function (id) {
+      const el = document.getElementById(id);
+      if (el && holder.contains(el)) el.classList.add("selected");
+    });
   }
 
   // The note, rest or chord that was clicked. The inside of an open notehead (half and whole notes) is a hole in
@@ -319,10 +330,15 @@
     return best;
   }
 
+  let justDragged = false;
+
   holder.addEventListener("click", function (e) {
+    if (justDragged) return;   // the end of a drag over the page
     const target = hit(e);
+    const more = e.ctrlKey || e.metaKey;
+
     if (!target) {
-      select("");
+      if (!more && !e.shiftKey) select("");
       return;
     }
 
@@ -331,15 +347,25 @@
     const chord = target.parentElement && target.parentElement.closest ? target.parentElement.closest("g.chord") : null;
     const group = target.closest("g.tabGrp");
     const tabChord = group && group.querySelectorAll("g.note").length > 1 ? group : null;
-    const current = selectedId ? holder.querySelector('[id="' + selectedId.replace(/"/g, '\\"') + '"]') : null;
+    const current = selectedId ? document.getElementById(selectedId) : null;
     const together = chord || tabChord;
     const sameChord = together && (selectedId === together.id || (current && together.contains(current)));
-    select(sameChord && target.classList.contains("note") ? target.id : (together || target).id);
+    const clicked = (together || target).id;
+
+    if (more) { toggle(clicked); return; }                                   // Ctrl+click: one more note, or one less
+    if (e.shiftKey && selectedId) { range(selectedId, clicked); return; }    // Shift+click: the notes in between
+    select(sameChord && target.classList.contains("note") ? target.id : clicked);
   });
 
   // The selection: a click, or the editor (after it made a new note, or to ask again what the selected one is).
   function select(id) {
     selectedId = id || "";
+    selection = selectedId ? [selectedId] : [];
+    changed();
+  }
+
+  // Shows the selection and asks what the primary note is.
+  function changed() {
     applySelection(false);
 
     if (selectedId) { info.textContent = "…"; send("nodeInfo", { id: selectedId }); }
@@ -348,9 +374,108 @@
     window.dispatchEvent(new Event("transcriber-selection"));
   }
 
+  // Several notes at once: the list of ids (for example the answer of the plugin), and which of them is the primary one.
+  function setSelection(ids, primary) {
+    const list = ids.filter(function (id, i) { return id && ids.indexOf(id) === i; });
+    selection = list;
+    selectedId = !list.length ? "" : primary && list.indexOf(primary) >= 0 ? primary : selectedId && list.indexOf(selectedId) >= 0 ? selectedId : list[list.length - 1];
+    changed();
+  }
+
+  function toggle(id) {
+    const at = selection.indexOf(id);
+    if (at >= 0) selection.splice(at, 1);
+    else selection.push(id);
+    selectedId = at >= 0 ? (selection.length ? selection[selection.length - 1] : "") : id;
+    changed();
+  }
+
+  // The notes from the primary one to this one in time (the plugin knows the order).
+  function range(from, to) {
+    wantedPrimary = to;
+    send("editScore", { op: "selectRange", from: from, to: to });
+  }
+
+  function selectAll() {
+    let id = selectedId;
+    if (!id) { const first = holder.querySelector("g.chord, g.note"); id = first ? first.id : ""; }
+    if (!id) return;
+    wantedPrimary = "";
+    send("editScore", { op: "selectAll", id: id });
+  }
+
+  // Every note of the pitch of the selected note ("pitch"), or the same note in every octave ("name"); a drum: every hit of it.
+  // With several notes selected only the measures they span are looked in.
+  function selectSame(mode) {
+    if (!selectedId) return;
+    wantedPrimary = "";
+    send("editScore", { op: "selectSame", id: selectedId, mode: mode, ids: selection.length > 1 ? selection : [] });
+  }
+
+  // The answers to these requests: the editor (edit.js) writes the message, this is the selection.
+  on("editResult", function (r) {
+    if (!r.readOnly || !r.ok || !r.selection || !r.selection.length) return;
+    setSelection(r.selection, wantedPrimary);
+    wantedPrimary = "";
+  });
+
+  function nodeText(text) { return (selection.length > 1 ? selection.length + " selected · the one clicked last: " : "") + text; }
+
   on("nodeInfo", function (r) {
     if (r.id !== selectedId) return;
-    info.textContent = r.text || "(not found in the score)";
+    info.textContent = nodeText(r.text || "(not found in the score)");
+  });
+
+  // A rectangle dragged over the page selects the notes it touches (Ctrl keeps the selection there was).
+  let drag = null;
+
+  holder.addEventListener("mousedown", function (e) {
+    if (e.button !== 0 || hit(e) || !(e.target.closest && e.target.closest(".sheet"))) return;
+    drag = { x: e.clientX, y: e.clientY, box: null, more: e.ctrlKey || e.metaKey };
+  });
+
+  document.addEventListener("mousemove", function (e) {
+    if (!drag) return;
+
+    if (!drag.box) {
+      if (Math.abs(e.clientX - drag.x) + Math.abs(e.clientY - drag.y) < 6) return;
+      drag.box = document.createElement("div");
+      drag.box.className = "marquee";
+      document.body.appendChild(drag.box);
+    }
+
+    const s = drag.box.style;
+    s.left = Math.min(e.clientX, drag.x) + "px";
+    s.top = Math.min(e.clientY, drag.y) + "px";
+    s.width = Math.abs(e.clientX - drag.x) + "px";
+    s.height = Math.abs(e.clientY - drag.y) + "px";
+  });
+
+  document.addEventListener("mouseup", function (e) {
+    if (!drag) return;
+    const d = drag;
+    drag = null;
+    if (!d.box) return;
+
+    d.box.remove();
+    justDragged = true;
+    setTimeout(function () { justDragged = false; }, 50);
+
+    const left = Math.min(e.clientX, d.x), right = Math.max(e.clientX, d.x), top = Math.min(e.clientY, d.y), bottom = Math.max(e.clientY, d.y);
+    const ids = [];
+
+    holder.querySelectorAll("g.chord, g.note, g.tabGrp").forEach(function (el) {
+      const chord = el.matches("g.note") && el.parentElement ? el.parentElement.closest("g.chord") : null;
+      const group = el.matches("g.note") && el.parentElement ? el.parentElement.closest("g.tabGrp") : null;
+      if (chord) return;                                                                    // the chord stands for its notes
+      if (group && group.querySelectorAll("g.note").length > 1) return;                     // so does a tab group of several notes
+      if (el.matches("g.tabGrp") && el.querySelectorAll("g.note").length < 2) return;      // a group of one note: the note itself
+      const r = el.getBoundingClientRect();
+      if (r.right >= left && r.left <= right && r.bottom >= top && r.top <= bottom) ids.push(el.id);
+    });
+
+    if (!ids.length) { if (!d.more) select(""); return; }
+    setSelection(d.more ? selection.concat(ids) : ids, ids[ids.length - 1]);
   });
 
   // ---- toolbar ----
@@ -408,5 +533,5 @@
   });
 
   // for tests in a browser
-  window.transcriberScore = { exportData: exportData, render: render, settings: settings, selected: function () { return selectedId; }, select: select, setMei: function (m) { mei = m; showEmpty(false); render(); } };
+  window.transcriberScore = { exportData: exportData, render: render, settings: settings, selected: function () { return selectedId; }, selectedIds: function () { return selection.slice(); }, select: select, setSelection: setSelection, refresh: function () { if (selectedId) send("nodeInfo", { id: selectedId }); }, selectAll: selectAll, selectSame: selectSame, setMei: function (m) { mei = m; showEmpty(false); render(); } };
 })();

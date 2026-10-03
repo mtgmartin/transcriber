@@ -676,7 +676,7 @@ juce::var CaptureService::editScore (const juce::var& request)
 
     const auto result = trs::performEdit (v->score, historyOf (*v), json);
 
-    if (result.ok && json.get ("op").asString() != "undo" && json.get ("op").asString() != "redo")
+    if (result.ok && ! result.readOnly && json.get ("op").asString() != "undo" && json.get ("op").asString() != "redo")
         v->scoreEdited = true;
 
     if (result.ok)   // the key of the score is what the page shows (a key change, or its undo)
@@ -690,6 +690,15 @@ juce::var CaptureService::editScore (const juce::var& request)
     o->setProperty ("ok", result.ok);
     o->setProperty ("message", juce::String::fromUTF8 (result.message.c_str()));
     o->setProperty ("select", juce::String::fromUTF8 (result.select.c_str()));
+
+    // several notes: the ids to select afterwards, and whether this was only a selection
+    juce::Array<juce::var> selection;
+
+    for (const auto& id : result.selection)
+        selection.add (juce::String::fromUTF8 (id.c_str()));
+
+    o->setProperty ("selection", selection);
+    o->setProperty ("readOnly", result.readOnly);
     return juce::var (o);
 }
 

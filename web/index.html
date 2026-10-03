@@ -50,6 +50,12 @@
       <button id="ed-undo" type="button" data-op="undo" disabled>Undo</button>
       <button id="ed-redo" type="button" data-op="redo" disabled>Redo</button>
       <span class="sep"></span>
+      <span class="dim">Select</span>
+      <button type="button" data-op="selectAll" title="Every note of the score (Ctrl+A). Ctrl+click adds or takes away a note, Shift+click selects the notes in between, a rectangle dragged over the page selects the notes in it" disabled>All</button>
+      <button type="button" data-op="selectSame" data-mode="pitch" data-show="piano guitar bass" title="Every note of the pitch of the selected note (Ctrl+Shift+A). With several notes selected: only in their measures" disabled>Same pitch</button>
+      <button type="button" data-op="selectSame" data-mode="name" data-show="piano guitar bass" title="The same note in every octave (Ctrl+Alt+A)" disabled>Any octave</button>
+      <button type="button" data-op="selectSame" data-mode="pitch" data-show="drums" title="Every hit of the drum of the selected hit (Ctrl+Shift+A). With several hits selected: only in their measures" disabled>Same drum</button>
+      <span class="sep"></span>
       <span class="grp" data-show="piano guitar bass">
       <span class="dim">Pitch</span>
       <button type="button" data-op="pitch" data-semitones="1" title="Half step up (Up arrow)" disabled>&#9650;</button>

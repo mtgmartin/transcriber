@@ -2104,3 +2104,481 @@ static void testGrooveClip()
 }
 REGISTER (testGrooveClip, "edit: the drum groove clip of the Live test sheet");
 #endif
+
+//==============================================================================
+// Phase 8b: selecting several notes, and editing them at once.
+
+static Json manyReq (const char* op, const std::vector<std::string>& ids)
+{
+    auto j = req (op, ids.empty() ? std::string() : ids.front());
+    auto list = Json::array();
+
+    for (const auto& id : ids)
+        list.push (Json (id));
+
+    j.set ("ids", list);
+    return j;
+}
+
+static Json manyReq (const char* op, const std::vector<std::string>& ids, const char* key, int value)
+{
+    auto j = manyReq (op, ids);
+    j.set (key, value);
+    return j;
+}
+
+static Json selectReq (const char* op, const std::string& id)
+{
+    return req (op, id);
+}
+
+// Two hands: bar 1 C4 E4 C4 G4 over C3 G2 halves; bar 2 C4 half and the chord C4 E4 half; bar 3 C5.
+static Score twoHands()
+{
+    return pianoScore ({ { p ("C4"), 0, 1 }, { p ("E4"), 1, 1 }, { p ("C4"), 2, 1 }, { p ("G4"), 3, 1 },
+                         { p ("C3"), 0, 2 }, { p ("G2"), 2, 2 },
+                         { p ("C4"), 4, 2 }, { p ("C4"), 6, 2 }, { p ("E4"), 6, 2 },
+                         { p ("C5"), 8, 4 } }, 12.0, 0);
+}
+
+// The ids of the notes and chords (no rests) of a staff, in order.
+static std::vector<std::string> noteIds (const Score& score, int staffNumber)
+{
+    std::vector<std::string> out;
+
+    for (const auto* e : events (score, staffNumber))
+        if (e->type != nodeType::rest)
+            out.push_back (e->id);
+
+    return out;
+}
+
+static std::set<std::string> asSet (const std::vector<std::string>& v) { return { v.begin(), v.end() }; }
+
+static void testSelections()
+{
+    Session s (twoHands());
+    const auto rh = noteIds (s.score, 1), lh = noteIds (s.score, 2);
+    CHECK_EQ (rh.size(), (size_t) 7);   // 4 + C4 + chord + C5
+    CHECK_EQ (lh.size(), (size_t) 2);
+    const Score before = s.score;
+    const auto undoName = s.undo.undoName();
+
+    // all: every note and chord of both hands, no rests; nothing changes and there is nothing to undo
+    auto all = performEdit (s.score, s.undo, selectReq ("selectAll", rh[2]));
+    CHECK (all.ok);
+    CHECK (all.readOnly);
+    CHECK_EQ (all.selection.size(), (size_t) 9);
+    CHECK (asSet (all.selection).count (lh[0]) == 1 && asSet (all.selection).count (rh[5]) == 1);
+    CHECK (s.score == before);
+    CHECK_STR (s.undo.undoName().c_str(), undoName.c_str());
+
+    // the same pitch: C4 is in 4 places (the chord note counts), as ids of notes
+    const auto chord = events (s.score)[5]->id;
+    CHECK_STR (events (s.score)[5]->type.c_str(), "chord");
+    auto sameC4 = performEdit (s.score, s.undo, selectReq ("selectSame", rh[0]));
+    CHECK (sameC4.ok);
+    CHECK_EQ (sameC4.selection.size(), (size_t) 4);
+    CHECK (asSet (sameC4.selection).count (rh[0]) == 1 && asSet (sameC4.selection).count (rh[2]) == 1 && asSet (sameC4.selection).count (rh[4]) == 1);
+    CHECK (asSet (sameC4.selection).count (chord) == 0);   // the note of the chord, not the chord
+    CHECK (s.score == before);
+
+    // the same note in every octave: C3 and C5 as well
+    auto name = selectReq ("selectSame", rh[0]);
+    name.set ("mode", "name");
+    CHECK_EQ (performEdit (s.score, s.undo, name).selection.size(), (size_t) 6);
+
+    // only in the measures of the notes asked for: bars 1 and 2
+    auto within = manyReq ("selectSame", { rh[0], rh[4] });
+    within.set ("id", rh[0]);
+    within.set ("mode", "name");
+    CHECK_EQ (performEdit (s.score, s.undo, within).selection.size(), (size_t) 5);   // C4 x4 and C3, not C5
+    within.set ("mode", "pitch");
+    CHECK_EQ (performEdit (s.score, s.undo, within).selection.size(), (size_t) 4);
+
+    // a chord stands for the pitches of all its notes: C4 (4 places) and E4 (2)
+    CHECK_EQ (performEdit (s.score, s.undo, selectReq ("selectSame", chord)).selection.size(), (size_t) 6);
+
+    // a rest is not a pitch
+    CHECK (! performEdit (s.score, s.undo, selectReq ("selectSame", events (s.score, 2)[2]->id)).ok);
+
+    // a range: the notes between two clicks, in the staff of the first one (every voice)
+    auto range = Json::object();
+    range.set ("op", "selectRange");
+    range.set ("from", rh[0]);
+    range.set ("to", rh[2]);
+    auto r = performEdit (s.score, s.undo, range);
+    CHECK (r.ok);
+    CHECK_EQ (r.selection.size(), (size_t) 3);
+    range.set ("from", rh[4]);
+    range.set ("to", rh[1]);   // backwards, across a bar line
+    CHECK_EQ (performEdit (s.score, s.undo, range).selection.size(), (size_t) 4);   // E4 C4 G4 and C4 half
+    range.set ("from", rh[0]);
+    range.set ("to", lh[0]);   // another staff
+    CHECK (! performEdit (s.score, s.undo, range).ok);
+    CHECK (s.score == before);
+
+    // guitar: a click in the tab gives tab ids, a click in the notation gives notation ids
+    Session gs (fretted ({ { p ("E2"), 0, 1 }, { p ("A2"), 1, 1 }, { p ("E2"), 2, 1 }, { p ("G3"), 3, 1 } }, 4.0));
+    const auto tabIds = noteIds (gs.score, 2), notation = noteIds (gs.score, 1);
+    auto fromTab = performEdit (gs.score, gs.undo, selectReq ("selectSame", tabIds[0]));
+    CHECK (fromTab.ok);
+    CHECK_EQ (fromTab.selection.size(), (size_t) 2);
+    CHECK (asSet (fromTab.selection).count (tabIds[0]) == 1 && asSet (fromTab.selection).count (tabIds[2]) == 1);
+    auto fromNotation = performEdit (gs.score, gs.undo, selectReq ("selectSame", notation[0]));
+    CHECK (asSet (fromNotation.selection).count (notation[0]) == 1 && asSet (fromNotation.selection).count (notation[2]) == 1);
+    CHECK_EQ (performEdit (gs.score, gs.undo, selectReq ("selectAll", tabIds[1])).selection.size(), (size_t) 4);
+
+    // drums: the same drum (all the closed hi-hats)
+    Session d (drumGroove());
+    int hats = 0;
+
+    for (const auto* e : events (d.score))
+    {
+        if (e->type == nodeType::note && e->prop ("pitch").asInt() == 42) ++hats;
+        if (e->type == nodeType::chord) for (const auto& n : e->children) if (n.prop ("pitch").asInt() == 42) ++hats;
+    }
+
+    CHECK_EQ (hats, 8);
+    auto hat = performEdit (d.score, d.undo, selectReq ("selectSame", events (d.score)[0]->id));
+    CHECK (hat.ok);
+    CHECK_EQ ((int) hat.selection.size(), hats);
+}
+REGISTER (testSelections, "edit: select all, a range, and every note of the same pitch or drum");
+
+static void testManyEdits()
+{
+    const auto base = twoHands();
+    auto fresh = [&] { return Session (base); };
+    Session a = fresh(), b = fresh();
+    const auto rh = noteIds (a.score, 1), lh = noteIds (a.score, 2);
+
+    // pitch on notes of both hands: the same as one after the other, as one undo step (Session checks that), selection kept
+    const std::vector<std::string> some { rh[0], rh[2], lh[0], rh[6] };
+    auto r = a.run (manyReq ("pitch", some, "semitones", 1));
+    CHECK (r.ok);
+    CHECK_EQ (r.selection.size(), some.size());
+    CHECK_STR (r.select.c_str(), rh[0].c_str());
+
+    for (const auto& id : some)
+        b.run (req ("pitch", id, "semitones", 1));
+
+    CHECK (a.score == b.score);
+    CHECK_STR (problems (a.score).c_str(), "");
+
+    // an octave down on every C4 (what "select same" finds)
+    Session c = fresh(), d = fresh();
+    const auto c4 = performEdit (c.score, c.undo, selectReq ("selectSame", rh[0])).selection;
+    CHECK (c.run (manyReq ("pitch", c4, "semitones", -12)).ok);
+
+    for (const auto& id : c4)
+        d.run (req ("pitch", id, "semitones", -12));
+
+    CHECK (c.score == d.score);
+
+    // a chord and one of its notes: the chord counts once
+    Session e1 = fresh(), e2 = fresh();
+    const auto chord = events (e1.score)[5]->id;
+    CHECK (e1.run (manyReq ("pitch", { chord, events (e1.score)[5]->children[0].id }, "semitones", 2)).ok);
+    CHECK (e2.run (req ("pitch", chord, "semitones", 2)).ok);
+    CHECK (e1.score == e2.score);
+
+    // length: from the last to the first, as one after the other in that order
+    Session f = fresh(), g = fresh();
+    CHECK (f.run (manyReq ("duration", { rh[0], rh[1], rh[2], rh[3] }, "dur", 8)).ok);
+
+    for (size_t i = 4; i-- > 0;)
+        g.run (req ("duration", rh[i], "dur", 8));
+
+    CHECK (f.score == g.score);
+    CHECK_STR (problems (f.score).c_str(), "");
+
+    // a note value that takes a selected neighbour: the neighbour is just gone
+    Session h = fresh();
+    CHECK (h.run (manyReq ("duration", { rh[0], rh[1] }, "dur", 2)).ok);
+    CHECK_STR (problems (h.score).c_str(), "");
+
+    // delete and interval and stem
+    Session i1 = fresh(), i2 = fresh();
+    CHECK (i1.run (manyReq ("delete", { rh[1], rh[3], lh[1] })).ok);
+
+    for (const auto& id : { rh[1], rh[3], lh[1] })
+        i2.run (req ("delete", id));
+
+    CHECK (i1.score == i2.score);
+    Session j1 = fresh(), j2 = fresh();
+    CHECK (j1.run (manyReq ("interval", { rh[0], rh[1], rh[3] }, "interval", 3)).ok);
+
+    for (const auto& id : { rh[0], rh[1], rh[3] })
+        j2.run (req ("interval", id, "interval", 3));
+
+    CHECK (j1.score == j2.score);
+    auto stem = manyReq ("stem", { rh[0], rh[1], rh[2] });
+    stem.set ("dir", "down");
+    Session st = fresh();
+    CHECK (st.run (stem).ok);
+
+    // marks that switch on and off: all get the dynamic if one lacks it; all lose it when all have it
+    Session k = fresh();
+    auto mf = req ("dynamic", rh[1]);
+    mf.set ("value", "mf");
+    CHECK (k.run (mf).ok);   // one has it
+    auto many = manyReq ("dynamic", { rh[0], rh[1], rh[2] });
+    many.set ("value", "mf");
+    CHECK (k.run (many).ok);
+
+    for (const auto& id : { rh[0], rh[1], rh[2] })
+        CHECK_STR (k.score.find (id)->prop ("dyn").asString().c_str(), "mf");
+
+    CHECK (k.run (many).ok);   // every one has it: it goes from all
+
+    for (const auto& id : { rh[0], rh[1], rh[2] })
+        CHECK (! k.score.find (id)->has ("dyn"));
+
+    // a rest among them is skipped by a mark; a pitch on a rest refuses all
+    Session m = fresh();
+    const auto restId = events (m.score, 2)[2]->id;
+    auto acc = manyReq ("artic", { rh[0], restId, rh[1] });
+    acc.set ("value", "acc");
+    CHECK (m.run (acc).ok);
+    CHECK_STR (m.score.find (rh[1])->prop ("artic").asString().c_str(), "acc");
+    auto bad = m.run (manyReq ("pitch", { rh[0], restId }, "semitones", 1));
+    CHECK (! bad.ok);
+
+    // too high for one of them: nothing changes at all
+    Session n (pianoScore ({ { p ("C4"), 0, 1 }, { p ("C8"), 1, 1 } }, 4.0, 0));
+    const auto ends = noteIds (n.score, 1);
+    const auto refused = n.run (manyReq ("pitch", ends, "semitones", 1));
+    CHECK (! refused.ok);
+    CHECK (refused.message.find ("Nothing was changed") != std::string::npos);
+
+    // a slur over the first to the last note of a group
+    Session o = fresh();
+    auto slur = manyReq ("slur", { rh[0], rh[3] });
+    CHECK (o.run (slur).ok);
+    int slurs = 0;
+
+    for (const auto& sp : o.score.root().children)
+        if (sp.type == nodeType::spanner && sp.prop ("from").asString() == rh[0] && sp.prop ("to").asString() == rh[3])
+            ++slurs;
+
+    CHECK_EQ (slurs, 1);
+    Session q = fresh();
+    CHECK (! q.run (manyReq ("slur", { rh[0], lh[0] })).ok);   // not one voice of one staff
+}
+REGISTER (testManyEdits, "edit: one edit on several notes, as one undo step");
+
+static void testManyEditsFretted()
+{
+    const auto riff = fretted ({ { p ("E2"), 0, 1 }, { p ("A2"), 1, 1 }, { p ("D3"), 2, 1 }, { p ("G3"), 3, 1 }, { p ("B3"), 3, 1 } }, 4.0);
+    Session s (riff);
+    const auto tab = noteIds (s.score, 2);
+
+    // from clicks in the tab: the notation notes change, the tab follows, the answer has tab ids
+    auto r = s.run (manyReq ("pitch", { tab[1], tab[2] }, "semitones", 1));
+    CHECK (r.ok);
+    CHECK_STR (tabLine (s.score).c_str(), "6:0 5:1 4:1 [3:0 2:0]");
+    CHECK_STR (tabProblems (s.score).c_str(), "");
+    CHECK_EQ (r.selection.size(), (size_t) 2);
+
+    for (const auto& id : r.selection)
+        CHECK (s.score.find (id) != nullptr && id.size() > 2 && id.compare (id.size() - 2, 2, "-t") == 0);
+
+    // one of them cannot be played: all are refused
+    Session low (riff);
+    const auto lowTab = noteIds (low.score, 2);
+    CHECK (! low.run (manyReq ("pitch", { lowTab[0], lowTab[1] }, "semitones", -1)).ok);   // E2 would be below the lowest string
+
+    // bass too
+    Session bass (fretted ({ { p ("E1"), 0, 1 }, { p ("A1"), 1, 1 }, { p ("D2"), 2, 1 } }, 4.0, InstrumentType::bass));
+    CHECK (bass.run (manyReq ("pitch", noteIds (bass.score, 2), "semitones", 2)).ok);
+    CHECK_STR (tabProblems (bass.score).c_str(), "");
+}
+REGISTER (testManyEditsFretted, "edit: several notes of a guitar or bass score, from the tab");
+
+static void testManyEditsDrums()
+{
+    Session s (drumGroove());
+    const auto hats = performEdit (s.score, s.undo, selectReq ("selectSame", events (s.score)[0]->id)).selection;
+    CHECK_EQ (hats.size(), (size_t) 8);
+
+    // a crash on three hi-hat hits, as one step; without a chosen drum nothing happens
+    CHECK (! s.run (manyReq ("drumAdd", { hats[0], hats[2], hats[4] })).ok);
+    auto add = manyReq ("drumAdd", { hats[0], hats[2], hats[4] });
+    add.set ("drum", drumJson (49));
+    auto r = s.run (add);
+    CHECK (r.ok);
+    CHECK (dumpScore (s.score).find ("[Closed_hi-hat Crash_cymbal_1]") != std::string::npos);
+    CHECK_STR (problems (s.score).c_str(), "");
+
+    // a ghost note: on all, then from all
+    Session g (drumGroove());
+    const auto snares = performEdit (g.score, g.undo, selectReq ("selectSame", events (g.score)[2]->children[0].id)).selection;
+    CHECK (snares.size() >= 2);
+    CHECK (g.run (manyReq ("ghost", snares)).ok);
+
+    for (const auto& id : snares)
+        CHECK (g.score.find (id)->prop ("ghost").asBool());
+
+    CHECK (g.run (manyReq ("ghost", snares)).ok);
+
+    for (const auto& id : snares)
+        CHECK (! g.score.find (id)->prop ("ghost").asBool());
+
+    // the pitch controls are not for drums, several notes or one
+    CHECK (! g.run (manyReq ("pitch", snares, "semitones", 1)).ok);
+}
+REGISTER (testManyEditsDrums, "edit: several drum hits at once");
+
+// Random selections and operations: the result is the same as one note after the other, one undo step undoes it, a refusal changes nothing.
+static void testRandomManyEdits()
+{
+    std::mt19937 rng (31);
+    int applied = 0, refused = 0, same = 0;
+
+    for (int take = 0; take < 40; ++take)
+    {
+        std::vector<N> notes;
+        const int count = 8 + (int) (rng() % 20);
+
+        for (int i = 0; i < count; ++i)
+            notes.push_back ({ 40 + (int) (rng() % 45), (double) (rng() % 48) * 0.25, 0.25 * (double) (1 + rng() % 6) });
+
+        Session s (pianoScore (notes, 14.0, (int) (rng() % 12), rng() % 2 == 0));
+        std::vector<Score> history { s.score };
+
+        for (int step = 0; step < 40; ++step)
+        {
+            const auto kind = rng() % 12;
+            const bool needsNotes = kind == 0 || kind == 1 || kind == 4 || kind == 7;   // on a rest they are refused (or do nothing)
+            auto all = events (s.score);
+            auto lower = events (s.score, 2);
+            all.insert (all.end(), lower.begin(), lower.end());
+
+            if (needsNotes && rng() % 4 != 0)
+                all.erase (std::remove_if (all.begin(), all.end(), [] (const Node* n) { return n->type == nodeType::rest; }), all.end());
+
+            if (all.size() < 2)
+                continue;
+
+            std::set<std::string> chosen;
+            const int wanted = (int) std::min<size_t> (all.size(), 2 + rng() % 6);
+            int tries = 0;
+
+            while ((int) chosen.size() < wanted && ++tries < 200)
+                chosen.insert (all[rng() % all.size()]->id);
+
+            if (chosen.size() < 2)
+                continue;
+
+            const std::vector<std::string> ids (chosen.begin(), chosen.end());
+            Json j = Json::object();
+            bool comparable = false;
+
+            switch (kind)
+            {
+                case 0: j = manyReq ("pitch", ids, "semitones", (rng() % 2 == 0 ? 1 : -1) * (1 + (int) (rng() % 2))); comparable = true; break;
+                case 1: j = manyReq ("pitch", ids, "semitones", rng() % 2 == 0 ? 12 : -12); comparable = true; break;
+                case 2: j = manyReq ("duration", ids, "dur", 1 << (rng() % 6)); break;
+                case 3: j = manyReq ("delete", ids); break;
+                case 4: j = manyReq ("interval", ids, "interval", 2 + (int) (rng() % 7)); comparable = true; break;
+                case 5: j = manyReq ("tie", ids); break;
+                case 6: j = manyReq ("respell", ids); break;
+                case 7: j = manyReq ("stem", ids); j.set ("dir", std::string (rng() % 2 == 0 ? "up" : "down")); comparable = true; break;
+                case 8: j = manyReq ("dynamic", ids); j.set ("value", std::string (rng() % 2 == 0 ? "mf" : "pp")); break;
+                case 9: j = manyReq ("artic", ids); j.set ("value", std::string (rng() % 3 == 0 ? "ferm" : "stacc")); break;
+                case 10: j = manyReq ("clear", ids); break;
+                default: j = manyReq ("beam", ids); j.set ("mode", std::string (rng() % 2 == 0 ? "break" : "join")); break;
+            }
+
+            const Score before = s.score;
+            const auto result = performEdit (s.score, s.undo, j);
+
+            if (result.ok)
+            {
+                ++applied;
+                history.push_back (s.score);
+                CHECK (! (s.score == before));
+            }
+            else
+            {
+                ++refused;
+                CHECK (s.score == before);
+            }
+
+            const auto p = problems (s.score);
+
+            if (! p.empty())
+                std::printf ("    take %d step %d: %s after %s\n", take, step, p.c_str(), j.dump().c_str());
+
+            CHECK_STR (p.c_str(), "");
+
+            // the same, one note after the other (for the operations that do not depend on the order). Both notes of a tie that
+            // are moved together keep the tie, one after the other the first move drops it: those are left out.
+            if (comparable)
+            {
+                for (const auto& id : ids)
+                {
+                    const auto* node = before.find (id);
+
+                    if (node != nullptr && (node->has ("tie") || std::any_of (node->children.begin(), node->children.end(), [] (const Node& c) { return c.has ("tie"); })))
+                        comparable = false;
+                }
+            }
+
+            if (comparable)
+            {
+                Session one (before);
+                bool allOk = true;
+
+                std::string why;
+
+                for (const auto& id : ids)
+                {
+                    auto q = j;
+                    q.set ("id", id);
+                    q.set ("ids", Json::array());
+                    const auto single = performEdit (one.score, one.undo, q);
+
+                    if (! single.ok && allOk)
+                        why = single.message + " at " + id;
+
+                    allOk = single.ok && allOk;
+                }
+
+                if (! allOk && result.ok && kind != 7)
+                    std::printf ("    take %d step %d: refused one by one (%s) but done as a whole: %s\n=== before\n%s", take, step, why.c_str(), j.dump().c_str(), dumpScore (before).c_str());
+
+                if (allOk && result.ok)
+                {
+                    if (kind != 4 && ! (one.score == s.score))
+                        std::printf ("    take %d step %d differs after %s\n=== before\n%s=== multi\n%s=== one by one\n%s", take, step, j.dump().c_str(),
+                                     dumpScore (before).c_str(), dumpScore (s.score).c_str(), dumpScore (one.score).c_str());
+
+                    if (kind == 4)
+                        CHECK_STR (dumpScore (one.score).c_str(), dumpScore (s.score).c_str());   // (the new notes get their ids in another order)
+                    else
+                        CHECK (one.score == s.score);
+
+                    ++same;
+                }
+
+                if (! allOk && result.ok && kind != 7)
+                    CHECK (false);   // refused one by one, so refused as a whole
+            }
+        }
+
+        for (size_t i = history.size() - 1; i > 0; --i)
+        {
+            CHECK (s.score == history[i]);
+            CHECK (s.undo.undo());   // one undo step per edit, however many notes
+        }
+
+        CHECK (s.score == history[0]);
+    }
+
+    CHECK (applied > 400);
+    CHECK (refused > 50);
+    CHECK (same > 50);
+}
+REGISTER (testRandomManyEdits, "edit: random edits of several notes equal the notes one after the other and undo in one step");

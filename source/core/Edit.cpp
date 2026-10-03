@@ -9,6 +9,8 @@
 #include <map>
 #include <memory>
 #include <set>
+#include <unordered_map>
+#include <unordered_set>
 
 namespace trs
 {
@@ -2319,7 +2321,9 @@ namespace
         return success ("On string " + std::to_string (strings - target) + ", fret " + std::to_string (fret) + ".", id);
     }
 
-    EditResult finish (Edit& e, UndoManager& undo, const std::string& name, EditResult result)
+    // What an edit of the copy comes to: the measures that differ (and the tab that follows them) are added to `out`.
+    // "Nothing changed." if the copy is the staff as it is.
+    EditResult prepare (Edit& e, std::vector<ReplaceChildrenCommand::Change>& out, EditResult result)
     {
         if (! result.ok)
             return result;
@@ -2355,11 +2359,767 @@ namespace
                 return fail (problem);
         }
 
+        for (auto& c : changes)
+            out.push_back (std::move (c));
+
+        return result;
+    }
+
+    EditResult finish (Edit& e, UndoManager& undo, const std::string& name, EditResult result)
+    {
+        std::vector<ReplaceChildrenCommand::Change> changes;
+        result = prepare (e, changes, std::move (result));
+
+        if (! result.ok)
+            return result;
+
         if (! undo.perform (std::make_unique<ReplaceChildrenCommand> (std::move (changes), name)))
             return fail ("The change did not fit the score.");
 
         return result;
     }
+
+    //==========================================================================
+    // One operation on the copy of the staff (what the page asked for with "op"); false if there is no such operation.
+    // `label` is the name of the undo step.
+    bool runOp (Edit& e, const Json& request, EditResult& result, std::string& label)
+    {
+        const auto& op = request.get ("op").asString();
+
+        if (op == "voice" && e.tab != nullptr)
+        {
+            label = "Change voice";
+            result = fail ("A guitar or bass score has one voice.");
+            return true;
+        }
+
+        if (op == "drumAdd" || op == "drumSet")
+        {
+            DrumSpec d;
+            label = op == "drumAdd" ? "Add drum" : "Change drum";
+
+            if (! isPercStaff (*e.staff))
+                result = fail ("Drums can only be added to a drum score.");
+            else if (! drumFrom (request.get ("drum"), d))
+                result = fail ("Choose a drum first.");
+            else
+                result = op == "drumAdd" ? addDrum (e, d) : setDrum (e, d);
+
+            return true;
+        }
+
+        if (op == "ghost")
+        {
+            label = "Ghost note";
+            result = isPercStaff (*e.staff) ? toggleGhost (e) : fail ("Ghost notes are for drums.");
+            return true;
+        }
+
+        if (op == "pitch")          { label = "Change pitch"; result = changePitch (e, (int) request.get ("semitones").asInt()); return true; }
+        if (op == "letter")
+        {
+            const auto& letter = request.get ("letter").asString();
+            label = "Enter note";
+            result = setLetter (e, letter.empty() ? ' ' : letter[0], request.get ("alter"));
+            return true;
+        }
+
+        if (op == "duration")       { label = "Change length"; result = setDuration (e, (int) request.get ("dur").asInt(), (int) request.get ("dots").asInt()); return true; }
+        if (op == "dot")            { label = "Dot"; result = toggleDot (e); return true; }
+        if (op == "delete")         { label = "Delete"; result = deleteNote (e); return true; }
+        if (op == "interval")       { label = "Add note to chord"; result = addInterval (e, (int) request.get ("interval").asInt()); return true; }
+        if (op == "tie")            { label = "Tie"; result = toggleTie (e); return true; }
+        if (op == "respell")        { label = "Change spelling"; result = respell (e); return true; }
+        if (op == "stem")           { label = "Stem direction"; result = setStem (e, request.get ("dir").asString()); return true; }
+        if (op == "beam")           { label = "Beam"; result = setBeam (e, request.get ("mode").asString()); return true; }
+        if (op == "voice")          { label = "Change voice"; result = moveToVoice (e, (int) request.get ("voice").asInt()); return true; }
+        if (op == "dynamic")        { label = "Dynamic"; result = setDynamic (e, request.get ("value").asString()); return true; }
+        if (op == "artic")          { label = "Articulation"; result = setArticulation (e, request.get ("value").asString()); return true; }
+        if (op == "text")           { label = "Text"; result = setText (e, request.get ("text").asString(), request.get ("place").asString()); return true; }
+        if (op == "clear")          { label = "Take away markings"; result = clearMarks (e); return true; }
+
+        return false;
+    }
+
+    //==========================================================================
+    // Several notes at once, and selections (Phase 8b)
+
+    // Where a note, chord or rest is, found in one pass over the score so that a selection of thousands of notes is quick.
+    struct Where
+    {
+        const Node* part = nullptr;
+        const Node* staff = nullptr;
+        const Node* node = nullptr;
+        const Node* chord = nullptr;   // the chord a note is in
+        size_t measure = 0;
+        int64_t onset = 0;
+        int64_t voice = 1;
+        bool tab = false;
+    };
+
+    using Index = std::unordered_map<std::string, Where>;
+
+    Index indexOf (const Score& score)
+    {
+        Index index;
+
+        for (const auto& part : score.root().children)
+        {
+            if (part.type != nodeType::part)
+                continue;
+
+            for (const auto& staff : part.children)
+            {
+                const bool tab = isTabStaff (staff);
+
+                for (size_t m = 0; m < staff.children.size(); ++m)
+                {
+                    for (const auto& layer : staff.children[m].children)
+                    {
+                        if (layer.type != nodeType::layer)
+                            continue;
+
+                        for (const auto& event : layer.children)
+                        {
+                            if (! isEvent (event))
+                                continue;
+
+                            Where w;
+                            w.part = &part;
+                            w.staff = &staff;
+                            w.node = &event;
+                            w.measure = m;
+                            w.onset = event.prop ("onset").asInt();
+                            w.voice = layer.prop ("n").asInt (1);
+                            w.tab = tab;
+                            index[event.id] = w;
+
+                            if (event.type == nodeType::chord)
+                            {
+                                for (const auto& n : event.children)
+                                {
+                                    Where k = w;
+                                    k.node = &n;
+                                    k.chord = &event;
+                                    index[n.id] = k;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        return index;
+    }
+
+    // The id of the notation note, chord or rest an id stands for: the id itself, unless it is in a tab staff.
+    std::string notationOf (const Score& score, const Index& index, const std::string& id)
+    {
+        const auto at = index.find (id);
+
+        if (at == index.end() || ! at->second.tab)
+            return id;
+
+        if (id.size() > 2 && id.compare (id.size() - 2, 2, "-t") == 0)
+        {
+            const auto base = id.substr (0, id.size() - 2);
+            const auto b = index.find (base);
+
+            if (b != index.end() && ! b->second.tab)
+                return base;
+        }
+
+        return notationIdOf (score, id);
+    }
+
+    struct Found
+    {
+        std::string id;
+        size_t measure = 0;
+        int64_t onset = 0;
+        int64_t voice = 1;
+    };
+
+    void sortFound (std::vector<Found>& found)
+    {
+        std::stable_sort (found.begin(), found.end(), [] (const Found& a, const Found& b)
+        {
+            if (a.measure != b.measure) return a.measure < b.measure;
+            if (a.onset != b.onset) return a.onset < b.onset;
+            return a.voice < b.voice;
+        });
+    }
+
+    // The notes and chords of a staff (not the rests), in time order.
+    std::vector<Found> eventsOfStaff (const Node& staff)
+    {
+        std::vector<Found> found;
+
+        for (size_t m = 0; m < staff.children.size(); ++m)
+            for (const auto& layer : staff.children[m].children)
+                if (layer.type == nodeType::layer)
+                    for (const auto& event : layer.children)
+                        if (isEvent (event) && event.type != nodeType::rest)
+                            found.push_back ({ event.id, m, event.prop ("onset").asInt(), layer.prop ("n").asInt (1) });
+
+        sortFound (found);
+        return found;
+    }
+
+    EditResult selected (const std::vector<std::string>& ids, bool toTab, const Score& score, const std::string& what)
+    {
+        EditResult r;
+        r.ok = true;
+        r.readOnly = true;
+
+        std::unordered_set<std::string> seen;
+        const auto index = toTab ? indexOf (score) : Index();
+
+        for (const auto& id : ids)
+        {
+            const auto wanted = toTab ? tabIdOf (id) : id;
+
+            if (toTab && index.find (wanted) == index.end())
+                continue;
+
+            if (seen.insert (wanted).second)
+                r.selection.push_back (wanted);
+        }
+
+        if (r.selection.empty())
+            return fail ("There is nothing to select.");
+
+        r.message = std::to_string (r.selection.size()) + (r.selection.size() == 1 ? " note" : " notes") + " selected" + what + ".";
+        return r;
+    }
+
+    // Every note and chord of the part of the note, staff after staff.
+    EditResult selectAll (const Score& score, const std::string& given)
+    {
+        const auto index = indexOf (score);
+        const auto at = index.find (given);
+
+        if (at == index.end())
+            return fail ("Click a note first.");
+
+        const bool fromTab = at->second.tab;
+        const auto key = notationOf (score, index, given);
+        const auto it = index.find (key);
+
+        if (it == index.end())
+            return fail ("Click a note first.");
+
+        std::vector<std::string> ids;
+
+        for (const auto& staff : it->second.part->children)
+        {
+            if (isTabStaff (staff))
+                continue;
+
+            for (const auto& f : eventsOfStaff (staff))
+                ids.push_back (f.id);
+        }
+
+        auto r = selected (ids, fromTab, score, "");
+
+        if (r.ok)
+            r.message = std::to_string (r.selection.size()) + (r.selection.size() == 1 ? " note" : " notes") + " selected (all of the score).";
+
+        return r;
+    }
+
+    // The notes and chords of the staff of `from`, from one place to the other in time (every voice).
+    EditResult selectRange (const Score& score, const std::string& givenFrom, const std::string& givenTo)
+    {
+        const auto index = indexOf (score);
+        const auto a = index.find (givenFrom), b = index.find (givenTo);
+
+        if (a == index.end() || b == index.end())
+            return fail ("Click a note first.");
+
+        const bool fromTab = a->second.tab;
+        const auto fromIt = index.find (notationOf (score, index, givenFrom));
+        const auto toIt = index.find (notationOf (score, index, givenTo));
+
+        if (fromIt == index.end() || toIt == index.end() || fromIt->second.staff != toIt->second.staff)
+            return fail ("Shift+click a note of the same staff to select the notes between.");
+
+        const auto before = [] (const Where& x, const Where& y) { return x.measure != y.measure ? x.measure < y.measure : x.onset < y.onset; };
+        const auto lo = before (toIt->second, fromIt->second) ? toIt->second : fromIt->second;
+        const auto hi = before (toIt->second, fromIt->second) ? fromIt->second : toIt->second;
+        std::vector<std::string> ids;
+
+        for (const auto& f : eventsOfStaff (*fromIt->second.staff))
+        {
+            Where here;
+            here.measure = f.measure;
+            here.onset = f.onset;
+
+            if (! before (here, lo) && ! before (hi, here))
+                ids.push_back (f.id);
+        }
+
+        return selected (ids, fromTab, score, "");
+    }
+
+    // Every note with the pitch of the note or chord (a drum: the same drum), in the part, or in the measures of `within`.
+    EditResult selectSame (const Score& score, const std::string& given, const std::string& mode, const Json& within)
+    {
+        const auto index = indexOf (score);
+        const auto at = index.find (given);
+
+        if (at == index.end())
+            return fail ("Click a note first.");
+
+        const bool fromTab = at->second.tab;
+        const auto key = notationOf (score, index, given);
+        const auto it = index.find (key);
+
+        if (it == index.end() || it->second.node->type == nodeType::rest)
+            return fail ("Click a note first.");
+
+        const auto& node = *it->second.node;
+        const bool drums = isPercStaff (*it->second.staff);
+        const bool anyOctave = mode == "name" && ! drums;
+        std::set<int> wanted;
+
+        auto key12 = [&] (int midi) { return anyOctave ? ((midi % 12) + 12) % 12 : midi; };
+
+        if (node.type == nodeType::chord)
+            for (const auto& n : node.children)
+                wanted.insert (key12 (midiOf (n)));
+        else
+            wanted.insert (key12 (midiOf (node)));
+
+        // only the measures of the notes in `within` (when there are several), in the staves of their part
+        size_t lo = ~(size_t) 0, hi = 0;
+        int found = 0;
+
+        for (size_t i = 0; i < within.size(); ++i)
+        {
+            const auto w = index.find (notationOf (score, index, within.at (i).asString()));
+
+            if (w == index.end() || w->second.part != it->second.part)
+                continue;
+
+            lo = std::min (lo, w->second.measure);
+            hi = std::max (hi, w->second.measure);
+            ++found;
+        }
+
+        const bool limited = found >= 2;
+        std::vector<Found> all;
+
+        for (const auto& staff : it->second.part->children)
+        {
+            if (isTabStaff (staff))
+                continue;
+
+            for (size_t m = limited ? lo : 0; m < staff.children.size() && (! limited || m <= hi); ++m)
+            {
+                for (const auto& layer : staff.children[m].children)
+                {
+                    if (layer.type != nodeType::layer)
+                        continue;
+
+                    for (const auto& event : layer.children)
+                    {
+                        if (! isEvent (event) || event.type == nodeType::rest)
+                            continue;
+
+                        auto add = [&] (const Node& n)
+                        {
+                            if (wanted.count (key12 (midiOf (n))) != 0)
+                                all.push_back ({ n.id, m, event.prop ("onset").asInt(), layer.prop ("n").asInt (1) });
+                        };
+
+                        if (event.type == nodeType::chord)
+                            for (const auto& n : event.children)
+                                add (n);
+                        else
+                            add (event);
+                    }
+                }
+            }
+        }
+
+        std::vector<std::string> ids;
+
+        for (const auto& f : all)
+            ids.push_back (f.id);
+
+        std::string what = drums ? " (the same drum)" : anyOctave ? " (the same note in every octave)" : " (the same pitch)";
+
+        if (limited)
+            what += " in the selected measures";
+
+        return selected (ids, fromTab, score, what);
+    }
+
+    // The ids an edit of several notes applies to: notation ids, each once, a chord instead of its notes.
+    std::vector<std::string> editTargets (const Score& score, const Index& index, const Json& list, const std::string& primary, bool& fromTab)
+    {
+        std::vector<std::string> ids;
+        std::unordered_set<std::string> seen;
+        fromTab = false;
+
+        auto take = [&] (const std::string& given)
+        {
+            const auto at = index.find (given);
+
+            if (at == index.end())
+                return;
+
+            fromTab = fromTab || at->second.tab;
+            const auto id = notationOf (score, index, given);
+
+            if (index.count (id) != 0 && seen.insert (id).second)
+                ids.push_back (id);
+        };
+
+        if (! primary.empty())
+            take (primary);
+
+        for (size_t i = 0; i < list.size(); ++i)
+            take (list.at (i).asString());
+
+        // a chord and some of its notes: the chord stands for them all
+        ids.erase (std::remove_if (ids.begin(), ids.end(), [&] (const std::string& id)
+        {
+            const auto& w = index.at (id);
+            return w.chord != nullptr && seen.count (w.chord->id) != 0;
+        }), ids.end());
+
+        return ids;
+    }
+
+    // The event (and the chord note, if one was asked for) of the copy of the staff that an id stands for.
+    bool relocate (Edit& e, const std::string& id, size_t measure)
+    {
+        if (measure >= e.measures.size())
+            return false;
+
+        auto& m = e.measures[measure];
+        e.noteId.clear();
+
+        for (size_t l = 0; l < m.children.size(); ++l)
+        {
+            auto& layer = m.children[l];
+
+            if (layer.type != nodeType::layer)
+                continue;
+
+            for (size_t i = 0; i < layer.children.size(); ++i)
+            {
+                auto& event = layer.children[i];
+                bool found = event.id == id;
+
+                if (! found && event.type == nodeType::chord)
+                {
+                    for (const auto& n : event.children)
+                    {
+                        if (n.id == id)
+                        {
+                            found = true;
+                            e.noteId = id;
+                        }
+                    }
+                }
+
+                if (found)
+                {
+                    e.mi = measure;
+                    e.li = l;
+                    e.ei = i;
+                    e.geometry = geometryOf (m);
+                    return true;
+                }
+            }
+        }
+
+        return false;
+    }
+
+    // Does the note (chord, rest) have what the operation would give it? For the marks that switch on and off.
+    bool hasMark (Edit& e, const std::string& op, const Json& request)
+    {
+        const auto& event = e.event();
+
+        if (op == "dynamic")
+            return ! request.get ("value").asString().empty() && event.prop ("dyn").asString() == request.get ("value").asString();
+
+        if (op == "artic")
+            return request.get ("value").asString() == "ferm" ? event.prop ("fermata").asBool()
+                                                              : event.prop ("artic").asString() == request.get ("value").asString();
+
+        if (op == "dot")
+            return event.prop ("dots").asInt() > 0;
+
+        if (op == "ghost" || op == "tie")
+        {
+            const auto targets = e.targets();
+            bool all = ! targets.empty(), any = false;
+
+            for (const auto* n : targets)
+            {
+                const bool has = op == "ghost" ? n->prop ("ghost").asBool() : tieNext (*n);
+                all = all && has;
+                any = any || has;
+            }
+
+            return op == "ghost" ? all : any;
+        }
+
+        return false;
+    }
+
+    bool isMarkOp (const std::string& op)
+    {
+        return op == "dynamic" || op == "artic" || op == "dot" || op == "ghost" || op == "tie";
+    }
+
+    // Operations that mean nothing for some of the notes (a tie with nothing to tie to, a dynamic that is there already): those are
+    // left out and the others are done.
+    bool skipsQuietly (const std::string& op)
+    {
+        static const std::set<std::string> names = { "dynamic", "artic", "text", "clear", "stem", "beam", "ghost", "respell", "tie", "voice",
+                                                     "drumAdd", "drumSet", "delete" };
+        return names.count (op) != 0;
+    }
+
+    // A slur or hairpin from the first to the last of the selected notes (one voice).
+    EditResult spannerOverSelection (Score& score, UndoManager& undo, const Index& index, std::vector<std::string> ids, const std::string& op, const Json& request)
+    {
+        std::sort (ids.begin(), ids.end(), [&] (const std::string& a, const std::string& b)
+        {
+            const auto& x = index.at (a);
+            const auto& y = index.at (b);
+            return x.measure != y.measure ? x.measure < y.measure : x.onset < y.onset;
+        });
+
+        const auto& first = index.at (ids.front());
+        const auto& last = index.at (ids.back());
+
+        if (first.staff != last.staff || first.voice != last.voice)
+            return fail ("Select notes of one voice in one staff for a slur or hairpin.");
+
+        Edit e (score);
+
+        if (! locate (e, ids.front()))
+            return fail ("Select a note first.");
+
+        auto sequences = sequencesOf (e.measures);
+        auto& seq = sequences[e.layer().prop ("n").asInt (1)];
+        size_t at = 0;
+
+        while (at < seq.size() && seq[at].event != &e.event())
+            ++at;
+
+        int count = 0;
+        bool reached = false;
+
+        for (size_t k = at + 1; k < seq.size() && ! reached; ++k)
+        {
+            if (seq[k].event->type == nodeType::rest)
+                continue;
+
+            ++count;
+            reached = seq[k].event->id == (last.chord != nullptr ? last.chord->id : last.node->id);
+        }
+
+        if (! reached)
+            return fail ("Select notes of one voice in one staff for a slur or hairpin.");
+
+        return spanner (e, undo, op == "slur" ? "slur" : request.get ("form").asString() == "dim" ? "dim" : "cresc", count);
+    }
+
+    // An operation on several notes: done on a copy of every staff, then written as one undo step. Nothing changes if any of it fails.
+    EditResult doMany (Score& score, UndoManager& undo, const Json& request)
+    {
+        const auto& op = request.get ("op").asString();
+        const auto index = indexOf (score);
+        bool fromTab = false;
+        const auto ids = editTargets (score, index, request.get ("ids"), request.get ("id").asString(), fromTab);
+
+        if (ids.empty())
+            return fail ("Select a note or a rest first.");
+
+        if (op == "slur" || op == "hairpin")
+        {
+            if (ids.size() < 2)
+                return fail ("Select the notes the slur or hairpin runs over (the first and the last).");
+
+            auto r = spannerOverSelection (score, undo, index, ids, op, request);
+            r.selection = ids;
+
+            if (fromTab)
+                for (auto& id : r.selection)
+                    id = tabIdOf (id);
+
+            return r;
+        }
+
+        // one copy of the measures for every staff that holds a selected note
+        std::vector<std::unique_ptr<Edit>> edits;
+        std::vector<std::vector<std::string>> groups;
+        std::map<const Node*, size_t> groupOf;
+
+        for (const auto& id : ids)
+        {
+            const auto& w = index.at (id);
+            auto g = groupOf.find (w.staff);
+
+            if (g == groupOf.end())
+            {
+                auto e = std::make_unique<Edit> (score);
+
+                if (! locate (*e, id))
+                    return fail (w.node->type == nodeType::rest ? "Select a note first." : "That cannot be edited.");
+
+                groupOf[w.staff] = edits.size();
+                edits.push_back (std::move (e));
+                groups.emplace_back();
+                g = groupOf.find (w.staff);
+            }
+
+            groups[g->second].push_back (id);
+        }
+
+        // in time order; a longer note value takes what comes after it, so that goes from the last to the first
+        for (auto& group : groups)
+        {
+            std::stable_sort (group.begin(), group.end(), [&] (const std::string& a, const std::string& b)
+            {
+                const auto& x = index.at (a);
+                const auto& y = index.at (b);
+
+                if (x.measure != y.measure) return x.measure < y.measure;
+                if (x.onset != y.onset) return x.onset < y.onset;
+                return x.voice < y.voice;
+            });
+
+            if (op == "duration")
+                std::reverse (group.begin(), group.end());
+        }
+
+        // a mark that switches on and off: all get it, unless all have it already
+        bool allHave = false;
+
+        if (isMarkOp (op))
+        {
+            allHave = true;
+            int seen = 0;
+
+            for (size_t g = 0; g < groups.size(); ++g)
+            {
+                for (const auto& id : groups[g])
+                {
+                    if (! relocate (*edits[g], id, index.at (id).measure) || edits[g]->event().type == nodeType::rest)
+                        continue;
+
+                    ++seen;
+                    allHave = allHave && hasMark (*edits[g], op, request);
+                }
+            }
+
+            allHave = allHave && seen > 0;
+        }
+
+        std::map<std::string, std::string> now;   // what each id is after the edit
+        std::string label = op, first, quiet;
+        int done = 0;
+
+        for (size_t g = 0; g < groups.size(); ++g)
+        {
+            auto& e = *edits[g];
+
+            for (const auto& id : groups[g])
+            {
+                if (! relocate (e, id, index.at (id).measure))
+                    continue;   // taken out by an earlier note that was made longer
+
+                if (isMarkOp (op) && ! allHave && e.event().type != nodeType::rest && hasMark (e, op, request))
+                    continue;
+
+                EditResult r;
+
+                if (! runOp (e, request, r, label))
+                    return fail ("Unknown edit \"" + op + "\".");
+
+                if (! r.ok)
+                {
+                    if (skipsQuietly (op))
+                    {
+                        if (quiet.empty())
+                            quiet = r.message;
+
+                        continue;
+                    }
+
+                    return fail (r.message + (ids.size() > 1 ? " Nothing was changed." : ""));
+                }
+
+                if (first.empty())
+                    first = r.message;
+
+                now[id] = r.select.empty() ? id : r.select;
+                ++done;
+            }
+        }
+
+        if (done == 0)
+            return fail (quiet.empty() ? "Nothing changed." : quiet);
+
+        std::vector<ReplaceChildrenCommand::Change> changes;
+
+        for (size_t g = 0; g < edits.size(); ++g)
+        {
+            const auto r = prepare (*edits[g], changes, success (""));
+
+            if (! r.ok && r.message != "Nothing changed.")
+                return fail (r.message);
+        }
+
+        if (changes.empty())
+            return fail ("Nothing changed.");
+
+        if (! undo.perform (std::make_unique<ReplaceChildrenCommand> (std::move (changes), label)))
+            return fail ("The change did not fit the score.");
+
+        // the answer: the notes that are still there (the tab ones again, if the tab was clicked)
+        const auto after = indexOf (score);
+        EditResult result;
+        result.ok = true;
+        result.message = first + " (" + std::to_string (done) + (done == 1 ? " note)." : " notes).");
+
+        std::unordered_set<std::string> seen;
+
+        for (const auto& id : ids)
+        {
+            const auto n = now.find (id);
+            const auto wanted = fromTab ? tabIdOf (n != now.end() ? n->second : id) : (n != now.end() ? n->second : id);
+
+            if (after.count (wanted) != 0 && seen.insert (wanted).second)
+                result.selection.push_back (wanted);
+        }
+
+        const auto primary = request.get ("id").asString();
+
+        if (! primary.empty())
+        {
+            const auto key = notationOf (score, after, primary);
+            const auto n = now.find (key);
+            const auto wanted = fromTab ? tabIdOf (n != now.end() ? n->second : key) : (n != now.end() ? n->second : key);
+
+            if (after.count (wanted) != 0)
+                result.select = wanted;
+        }
+
+        return result;
+    }
+
+
     // A new key signature for the whole score: every note is spelled for it again (pitches stay), the accidentals
     // are worked out again. One undo step.
     EditResult changeKey (Score& score, UndoManager& undo, int fifths, bool minor)
@@ -2459,10 +3219,50 @@ std::string editBlocker
 namespace
 {
     EditResult performOn (Score& score, UndoManager& undo, const Json& request);
+    EditResult performMany (Score& score, UndoManager& undo, const Json& request);
+
+    // Why an operation cannot be done on a drum score ("" if it can, or if the score has no drums).
+    std::string refusedForDrums (const Score& score, const std::string& op)
+    {
+        bool drumScore = false;
+
+        for (const auto& c : score.root().children)
+            if (c.type == nodeType::part && ! c.children.empty() && isPercStaff (c.children.front()))
+                drumScore = true;
+
+        // what only pitched music has
+        static const char* const notForDrums[] = { "pitch", "letter", "interval", "respell", "key", "stem", "voice", "slur", "hairpin" };
+
+        if (drumScore)
+            for (const auto* name : notForDrums)
+                if (op == name)
+                    return "That is for pitched music. A drum score has the Drums row: choose a drum and add it or change a hit to it.";
+
+        return {};
+    }
 }
 
 EditResult performEdit (Score& score, UndoManager& undo, const Json& request)
 {
+    const auto& requested = request.get ("op").asString();
+
+    // selections change nothing
+    if (requested == "selectAll")
+        return selectAll (score, request.get ("id").asString());
+
+    if (requested == "selectRange")
+        return selectRange (score, request.get ("from").asString(), request.get ("to").asString());
+
+    if (requested == "selectSame")
+        return selectSame (score, request.get ("id").asString(), request.get ("mode").asString(), request.get ("ids"));
+
+    // an operation on several notes
+    static const std::set<std::string> forMany = { "pitch", "letter", "duration", "dot", "delete", "interval", "tie", "respell", "stem", "beam",
+                                                   "voice", "dynamic", "artic", "text", "clear", "drumAdd", "drumSet", "ghost", "slur", "hairpin" };
+
+    if (forMany.count (requested) != 0 && request.get ("ids").size() >= 2)
+        return performMany (score, undo, request);
+
     // moving a note of the tab to another string works on the tab itself
     if (request.get ("op").asString() == "string")
     {
@@ -2515,19 +3315,8 @@ EditResult performOn (Score& score, UndoManager& undo, const Json& request)
     if (const auto blocked = editBlocker (score); ! blocked.empty())
         return fail (blocked);
 
-    bool drumScore = false;
-
-    for (const auto& c : score.root().children)
-        if (c.type == nodeType::part && ! c.children.empty() && isPercStaff (c.children.front()))
-            drumScore = true;
-
-    // what only pitched music has
-    static const char* const notForDrums[] = { "pitch", "letter", "interval", "respell", "key", "stem", "voice", "slur", "hairpin" };
-
-    if (drumScore)
-        for (const auto* name : notForDrums)
-            if (op == name)
-                return fail ("That is for pitched music. A drum score has the Drums row: choose a drum and add it or change a hit to it.");
+    if (const auto refused = refusedForDrums (score, op); ! refused.empty())
+        return fail (refused);
 
     if (op == "key")
         return changeKey (score, undo, (int) request.get ("fifths").asInt(), request.get ("minor").asBool());
@@ -2549,85 +3338,33 @@ EditResult performOn (Score& score, UndoManager& undo, const Json& request)
     if (! locate (e, request.get ("id").asString()))
         return fail ("Select a note or a rest first.");
 
-    if (op == "voice" && e.tab != nullptr)
-        return fail ("A guitar or bass score has one voice.");
-
-    if (op == "drumAdd" || op == "drumSet")
-    {
-        DrumSpec d;
-
-        if (! isPercStaff (*e.staff))
-            return fail ("Drums can only be added to a drum score.");
-
-        if (! drumFrom (request.get ("drum"), d))
-            return fail ("Choose a drum first.");
-
-        return finish (e, undo, op == "drumAdd" ? "Add drum" : "Change drum", op == "drumAdd" ? addDrum (e, d) : setDrum (e, d));
-    }
-
-    if (op == "ghost")
-    {
-        if (! isPercStaff (*e.staff))
-            return fail ("Ghost notes are for drums.");
-
-        return finish (e, undo, "Ghost note", toggleGhost (e));
-    }
-
-    if (op == "pitch")
-        return finish (e, undo, "Change pitch", changePitch (e, (int) request.get ("semitones").asInt()));
-
-    if (op == "letter")
-    {
-        const auto& letter = request.get ("letter").asString();
-        return finish (e, undo, "Enter note", setLetter (e, letter.empty() ? ' ' : letter[0], request.get ("alter")));
-    }
-
-    if (op == "duration")
-        return finish (e, undo, "Change length", setDuration (e, (int) request.get ("dur").asInt(), (int) request.get ("dots").asInt()));
-
-    if (op == "dot")
-        return finish (e, undo, "Dot", toggleDot (e));
-
-    if (op == "delete")
-        return finish (e, undo, "Delete", deleteNote (e));
-
-    if (op == "interval")
-        return finish (e, undo, "Add note to chord", addInterval (e, (int) request.get ("interval").asInt()));
-
-    if (op == "tie")
-        return finish (e, undo, "Tie", toggleTie (e));
-
-    if (op == "respell")
-        return finish (e, undo, "Change spelling", respell (e));
-
-    if (op == "stem")
-        return finish (e, undo, "Stem direction", setStem (e, request.get ("dir").asString()));
-
-    if (op == "beam")
-        return finish (e, undo, "Beam", setBeam (e, request.get ("mode").asString()));
-
-    if (op == "voice")
-        return finish (e, undo, "Change voice", moveToVoice (e, (int) request.get ("voice").asInt()));
-
-    if (op == "dynamic")
-        return finish (e, undo, "Dynamic", setDynamic (e, request.get ("value").asString()));
-
-    if (op == "artic")
-        return finish (e, undo, "Articulation", setArticulation (e, request.get ("value").asString()));
-
-    if (op == "text")
-        return finish (e, undo, "Text", setText (e, request.get ("text").asString(), request.get ("place").asString()));
-
-    if (op == "clear")
-        return finish (e, undo, "Take away markings", clearMarks (e));
-
     if (op == "slur")
         return spanner (e, undo, "slur", (int) request.get ("count").asInt (1));
 
     if (op == "hairpin")
         return spanner (e, undo, request.get ("form").asString() == "dim" ? "dim" : "cresc", (int) request.get ("count").asInt (1));
 
-    return fail ("Unknown edit \"" + op + "\".");
+    EditResult result;
+    std::string label;
+
+    if (! runOp (e, request, result, label))
+        return fail ("Unknown edit \"" + op + "\".");
+
+    return finish (e, undo, label, result);
+}
+
+// Several notes: every operation that works on a note, chord or rest.
+EditResult performMany (Score& score, UndoManager& undo, const Json& request)
+{
+    if (const auto blocked = editBlocker (score); ! blocked.empty())
+        return fail (blocked);
+
+    const auto refused = refusedForDrums (score, request.get ("op").asString());
+
+    if (! refused.empty())
+        return fail (refused);
+
+    return doMany (score, undo, request);
 }
 }  // namespace
 

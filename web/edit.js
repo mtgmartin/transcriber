@@ -70,6 +70,8 @@
       const id = selected();
       if (!id) { say("Click a note or a rest first.", true); return; }
       request.id = id;
+      const all = score() ? score().selectedIds() : [];
+      if (all.length > 1) request.ids = all;   // several notes: the plugin does it on each, as one undo step
     }
 
     send("editScore", request);
@@ -78,8 +80,10 @@
   on("editResult", function (r) {
     say(r.message, !r.ok);
     if (!score()) return;
-    if (r.ok && r.select) score().select(r.select);
-    else if (selected()) score().select(selected());   // the text of the selected note is asked for again
+    if (r.readOnly) return;   // a selection: score.js sets it
+    if (r.ok && r.selection && r.selection.length) score().setSelection(r.selection, r.select);
+    else if (r.ok && r.select) score().select(r.select);
+    else if (selected()) score().refresh();   // the text of the selected note is asked for again
   });
 
   on("capture", function (s) { status = s; update(); });
@@ -99,6 +103,9 @@
     if (b.dataset.value) request.value = b.dataset.value;
     if (b.dataset.form) request.form = b.dataset.form;
     if (request.op === "slur" || request.op === "hairpin") request.count = parseInt($("ed-span").value, 10);
+
+    if (request.op === "selectAll") { if (score()) score().selectAll(); b.blur(); return; }
+    if (request.op === "selectSame") { if (score()) score().selectSame(b.dataset.mode); b.blur(); return; }
 
     if (request.op === "text-dialog") { askText(); b.blur(); return; }
     if (request.op === "tempo-dialog") { askTempo(); b.blur(); return; }
@@ -277,6 +284,14 @@
     const k = e.key;
     const ctrl = e.ctrlKey || e.metaKey;
     let request = null;
+
+    if (ctrl && (k === "a" || k === "A") && score() && status && status.edit) {
+      e.preventDefault();
+      if (e.altKey) score().selectSame("name");           // Ctrl+Alt+A: the same note in every octave
+      else if (e.shiftKey) score().selectSame("pitch");   // Ctrl+Shift+A: the same pitch (the same drum)
+      else score().selectAll();                           // Ctrl+A: everything
+      return;
+    }
 
     if (ctrl && !e.altKey) {
       if (k === "z" || k === "Z") request = { op: e.shiftKey ? "redo" : "undo" };
