@@ -57,7 +57,11 @@ public:
     TranscriptionSettings transcriptionSettings() const { return TranscriptionSettings::fromJson (settings); }
     void setTranscriptionSettings (const TranscriptionSettings&);
 
-    // Makes the score from the recording (piano only for now). Does nothing for an edited score.
+    // The instrument the score is written for; a copy of its drum map is kept with the version.
+    Profile instrument() const { return Profile::fromJson (profile); }
+    void setProfile (const Profile&);
+
+    // Makes the score from the recording for the profile. Does nothing for an edited score.
     void regenerate();
 
     // Increases when the reading or the score changes.
@@ -105,10 +109,14 @@ public:
     bool remove (const std::string& id);
 
     Json uiPrefs = Json::object();
-    Json drumMaps = Json::array();   // filled in Phase 6
+    Json drumMaps = Json::array();   // the drum maps the user made (the built-in ones are in code)
+    Json defaultProfile = Json::object();   // the instrument a new recording gets
 
     // Changes whenever a version is added, removed, renamed, selected or edited.
     uint64_t revision() const;
+
+    // Counts a change that is not in a version (the default instrument, the drum maps), so that it is saved.
+    void markChanged() { ++structureRevision; }
 
     Json toJson() const;
     // `targetSchema` and `steps` exist so that tests can exercise the migration hook; the plugin uses the defaults.

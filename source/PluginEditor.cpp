@@ -95,6 +95,36 @@ juce::WebBrowserComponent::Options TranscriberEditor::makeBrowserOptions()
             processor.setDiagnosticsEnabled ((bool) data.getProperty ("enabled", false));
         })
         .withEventListener ("compareMidi", [this] (juce::var) { compareWithMidiFile(); })
+        .withEventListener ("setInstrument", [this] (juce::var data)
+        {
+            processor.getCapture().setInstrument (data.getProperty ("type", {}).toString());
+        })
+        .withEventListener ("drumMapSelect", [this] (juce::var data)
+        {
+            processor.getCapture().selectDrumMap (data.getProperty ("id", {}).toString());
+        })
+        .withEventListener ("drumMapNeed", [this] (juce::var data)
+        {
+            auto* o = new juce::DynamicObject();
+            const auto id = data.getProperty ("id", {}).toString();
+            o->setProperty ("id", id);
+            o->setProperty ("json", processor.getCapture().getDrumMapJson (id));
+            browser.emitEventIfBrowserIsVisible ("drumMap", juce::var (o));
+        })
+        .withEventListener ("drumMapSave", [this] (juce::var data)
+        {
+            const auto error = processor.getCapture().saveDrumMap (data.getProperty ("json", {}).toString());
+            auto* o = new juce::DynamicObject();
+            o->setProperty ("action", "save");
+            o->setProperty ("error", error);
+            browser.emitEventIfBrowserIsVisible ("drumMapResult", juce::var (o));
+        })
+        .withEventListener ("drumMapDelete", [this] (juce::var data)
+        {
+            processor.getCapture().deleteDrumMap (data.getProperty ("id", {}).toString());
+        })
+        .withEventListener ("drumMapImport", [this] (juce::var) { importDrumMap(); })
+        .withEventListener ("drumMapExport", [this] (juce::var data) { exportDrumMap (data.getProperty ("id", {}).toString()); })
         .withEventListener ("needMei", [this] (juce::var)
         {
             browser.emitEventIfBrowserIsVisible ("mei", processor.getCapture().getMei());
@@ -195,6 +225,13 @@ void TranscriberEditor::timerCallback()
     o->setProperty ("dropped", processor.getLog().getDroppedCount());
     o->setProperty ("scale", juce::Component::getApproximateScaleFactorForComponent (this));
 
+    {
+        auto* n = new juce::DynamicObject();
+        n->setProperty ("pitch", processor.getLastNote());
+        n->setProperty ("count", (juce::int64) processor.getNoteCount());
+        o->setProperty ("lastNote", juce::var (n));
+    }
+
     browser.emitEventIfBrowserIsVisible ("status", juce::var (o));
     browser.emitEventIfBrowserIsVisible ("capture", processor.getCapture().getStatus());
 
@@ -227,6 +264,62 @@ void TranscriberEditor::compareWithMidiFile()
         const auto result = ::compareWithMidiFile (file, processor.getCapture().getResolvedNotes(), 0.01);
         processor.getLog().logEvent ("compare", result.report);
         browser.emitEventIfBrowserIsVisible ("compareResult", result.report);
+    });
+}
+
+void TranscriberEditor::importDrumMap()
+{
+    chooser = std::make_unique<juce::FileChooser> ("Choose a drum map (JSON)",
+                                                   juce::File::getSpecialLocation (juce::File::userDocumentsDirectory),
+                                                   "*.json");
+
+    chooser->launchAsync (juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectFiles,
+                          [this] (const juce::FileChooser& fc)
+    {
+        const auto file = fc.getResult();
+
+        if (file == juce::File())
+            return;
+
+        auto* o = new juce::DynamicObject();
+        o->setProperty ("action", "import");
+
+        if (file.getSize() > 1024 * 1024)
+            o->setProperty ("error", "This file is too big to be a drum map.");
+        else
+            o->setProperty ("error", processor.getCapture().importDrumMap (file.loadFileAsString()));
+
+        browser.emitEventIfBrowserIsVisible ("drumMapResult", juce::var (o));
+    });
+}
+
+void TranscriberEditor::exportDrumMap (const juce::String& id)
+{
+    const auto text = processor.getCapture().getDrumMapJson (id);
+
+    if (text.isEmpty())
+        return;
+
+    chooser = std::make_unique<juce::FileChooser> ("Save the drum map",
+                                                   juce::File::getSpecialLocation (juce::File::userDocumentsDirectory)
+                                                       .getChildFile ("drum map.json"),
+                                                   "*.json");
+
+    chooser->launchAsync (juce::FileBrowserComponent::saveMode
+                              | juce::FileBrowserComponent::canSelectFiles
+                              | juce::FileBrowserComponent::warnAboutOverwriting,
+                          [this, text] (const juce::FileChooser& fc)
+    {
+        const auto file = fc.getResult();
+
+        if (file == juce::File())
+            return;
+
+        auto* o = new juce::DynamicObject();
+        o->setProperty ("action", "export");
+        o->setProperty ("error", file.replaceWithText (text) ? juce::String() : juce::String ("The file could not be written."));
+        o->setProperty ("path", file.getFullPathName());
+        browser.emitEventIfBrowserIsVisible ("drumMapResult", juce::var (o));
     });
 }
 

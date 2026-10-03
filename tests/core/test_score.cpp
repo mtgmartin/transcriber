@@ -733,7 +733,73 @@ namespace
         CHECK (doc.versions()[1].reading.source != ReadingSource::user);
     }
 
+    void testDocumentProfiles()
+    {
+        Document doc;
+        const auto capture = recordClip (120.0, 4, 0);
+        const auto reading = detectReading (capture);
+        const auto first = doc.addVersion (capture, reading.reading, reading, 1);
+
+        auto generatorOf = [&] (const Document& d, const std::string& id)
+        {
+            return d.find (id)->score.root().prop ("generator").asString();
+        };
+
+        CHECK (doc.find (first)->instrument().type == InstrumentType::piano);
+        CHECK_STR (generatorOf (doc, first).c_str(), "transcribePiano");
+
+        // new takes get the default instrument, old ones keep theirs
+        Profile guitar;
+        guitar.type = InstrumentType::guitar;
+        doc.defaultProfile = guitar.toJson();
+        const auto second = doc.addVersion (capture, reading.reading, reading, 2);
+        CHECK (doc.find (second)->instrument().type == InstrumentType::guitar);
+        CHECK_STR (generatorOf (doc, second).c_str(), "transcribeGuitar");
+        CHECK_STR (generatorOf (doc, first).c_str(), "transcribePiano");
+
+        // a take can be written for another instrument; the score is made again
+        Profile drums;
+        drums.type = InstrumentType::drums;
+        drums.drumMap = drumPreset ("gm2");
+        const auto before = doc.find (first)->revision();
+        doc.findMutable (first)->setProfile (drums);
+        CHECK (doc.find (first)->revision() > before);
+        CHECK_STR (generatorOf (doc, first).c_str(), "transcribeDrums");
+        CHECK (doc.find (first)->instrument() == drums);
+
+        // save and load: profiles, default and scores come back
+        Json parsed;
+        CHECK (Json::parse (doc.toJson().dump(), parsed));
+        Document back;
+        CHECK (Document::fromJson (parsed, back) == LoadResult::ok);
+        CHECK (back.find (first)->instrument() == drums);
+        CHECK (back.find (second)->instrument().type == InstrumentType::guitar);
+        CHECK_STR (generatorOf (back, first).c_str(), "transcribeDrums");
+        CHECK_STR (dumpScore (back.find (first)->score).c_str(), dumpScore (doc.find (first)->score).c_str());
+        CHECK_STR (dumpScore (back.find (second)->score).c_str(), dumpScore (doc.find (second)->score).c_str());
+        CHECK (Profile::fromJson (back.defaultProfile).type == InstrumentType::guitar);
+
+        // a copy keeps the instrument
+        const auto copy = doc.duplicate (first, 5);
+        CHECK (doc.find (copy)->instrument() == drums);
+
+        // an edited score is left alone
+        doc.findMutable (second)->scoreEdited = true;
+        doc.findMutable (second)->setProfile (drums);
+        CHECK_STR (generatorOf (doc, second).c_str(), "transcribeGuitar");
+
+        // a document without a default profile (an older save) gives pianos
+        Document old;
+        auto json = Document().toJson();
+        json.set ("defaultProfile", Json (3));
+        CHECK (Document::fromJson (json, old) == LoadResult::ok);
+        CHECK (old.defaultProfile.isObject());
+        const auto fresh = old.addVersion (capture, reading.reading, reading, 1);
+        CHECK (old.find (fresh)->instrument().type == InstrumentType::piano);
+    }
+
     void testDocumentRoundTrip()
+
     {
         auto doc = makeDocument();
         doc.rename (doc.versions()[1].id, "Chorus \xc4\x8d \"quoted\"");
@@ -977,6 +1043,7 @@ namespace
     REGISTER (testVersionManagement, "versions: add, select, rename, duplicate, delete");
     REGISTER (testRevisionTracksChanges, "versions: revision tracks changes");
     REGISTER (testReadingIsPerVersion, "versions: the reading belongs to the version");
+    REGISTER (testDocumentProfiles, "document: instrument profiles");
     REGISTER (testDocumentRoundTrip, "document: save and load round trip");
     REGISTER (testEmptyDocumentRoundTrip, "document: empty round trip");
     REGISTER (testLoadRejectsDamagedState, "document: damaged state is rejected");

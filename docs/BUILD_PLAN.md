@@ -1,6 +1,6 @@
 # Transcriber build plan
 
-Last updated 2026-10-02. **Current state: Phases 0-5 done and tested in Live. Phase 6 (drums, guitar, bass) is next; the user's reference clips are still to come.**
+Last updated 2026-10-02. **Current state: Phases 0-5 done and tested in Live. Phase 6 (drums, guitar, bass with tab) is built (build 0.6.0); its Live check (docs/phase6-tests.md) and the user's reference clips are still to come.**
 
 Transcriber is a Windows VST3 plugin for Ableton Live 11. It records the MIDI that plays on its track,
 in Session or Arrangement View, and turns it into editable sheet music for piano, drum kit or
@@ -370,6 +370,19 @@ Full results are in `docs/phase1-results.md`.
 **Done when:** a recorded piano take shows correctly in Live, and 200 bars re-render in under 1 s.
 
 ### Phase 6: drums, guitar, bass
+**What was built (build 0.6.0, 102 core tests, ~74000 checks):**
+- `source/core/Instruments.*`: `InstrumentType` (piano, drums, guitar, bass), `DrumEntry` {note, name, loc, head, voice, ghostBelow}, `DrumMap` (JSON, find/set/remove), built-in maps `gm` and `gm2`, `Profile` {type, drum map copy}, `openStrings()` (guitar E2 A2 D3 G3 B3 E4, bass E1 A1 D2 G2).
+- `source/core/TranscribeInternal.h`: the Builder (measures, beams, tuplets) moved here, now with a `noteMaker`, plus the steps every pipeline shares (`prepareNotes`, `analyseKey`, `addTempoMarks`, `finishScore`). Notes that land in one slot twice now count as merged for every instrument.
+- `Drums.cpp` `transcribeDrums`: one percussion staff; notes placed by the map (`loc` = MEI @loc), hands voice 1 (stems up), feet voice 2 (stems down); a hit is written as long as the time to the next hit of its voice but not past the end of its beat group (kick on 1 and 3 = quarters with rests); ghost notes by velocity in brackets; open hi-hat with an "o" above; same drum twice in a slot written once; notes not in the map are listed in a warning.
+- `Fretted.cpp` `assignTab` (dynamic programming over the chords: candidates on distinct strings within a 4-fret span, cost = span, height, open-string bonus, hand movement, string changes) and `transcribeFretted` (one voice, chords; a chord lasts until the next one or as long as its longest note; notes out of range or too many at once are warned about and left out; standard staff with 8vb clef + tab staff with the same events). `transcribe(capture, settings, profile)` picks the pipeline.
+- `Mei.cpp`: percussion staff (`clef.shape="perc"`, `@loc`, `head.shape="x"`/diamond, `head.mod="paren"` for ghosts, `<dir>o</dir>`, `stem.dir` by voice), tab staff (`notationtype="tab.guitar"`, `<tuning>` courses, `<tabGrp>` with `<tabDurSym/>`), 8vb clefs, bracket for tab. Verified in Verovio 6.3 (glyph.name and head.shape="circle"/"plus" are NOT supported on notes; that is why the open hi-hat uses a text mark).
+- `Document`: `defaultProfile` (new takes get it), `drumMaps` (the user's maps), `Version::setProfile`; the profile (with the map copy) is saved with every version; scores are made again at load as before.
+- `CaptureService`: `setInstrument`, `selectDrumMap`, `saveDrumMap` (a changed built-in map is saved as `user-N`), `importDrumMap`, `deleteDrumMap`, `getDrumMapJson`; the status carries `instrument`, `drumMaps`, `drumMapId`, `drumMapRevision`. The processor remembers the last note-on (`lastNote`, `noteCount`) for Learn; the page shows it.
+- Page: Instrument select in the Notation row (hands split only for piano, key not for drums), `web/drums.js` (map select, editor table with place/notehead/voice/ghost, Learn, Add, Save, Import/Export through file dialogs, Delete with confirmation, warning for unmapped notes). Live shows MIDI 60 as C3: the editor shows both names.
+- Tests: `tests/core/test_instruments.cpp` (maps, JSON, profiles, drum goldens incl. random takes, tab validity over 300 random sequences, tab = notation for 80 random takes, fixtures, MEI) and a document test; JUCE test `service: instruments and drum maps`. Fixtures `t31-*` from `tools/live/make-phase6-fixtures.ps1`.
+- Limits: guitar/bass is one voice (a sustained note under a melody is cut at the next onset); standard tuning only, 22 frets, no capo, no bends/slides/hammer-ons; drum hits never longer than their beat; no drum-specific beaming rules beyond the beat groups; the drum positions of toms and Latin percussion are a first guess (editable).
+
+**Original build list:**
 **Build:**
 - Drum profile and map editor with learn mode, GM/GM2 presets, JSON import/export, and a ghost-note threshold.
 - Guitar and bass profiles, plus the tab algorithm.
@@ -466,6 +479,6 @@ Tools in `tools/live/`. Copy them to the scratchpad or run them in place.
 
 ## 9. Status (update every session)
 
-- **Done:** Phases 0-5 with their Live tests (5: `docs/phase5-results.md`, build 0.5.0 verified in Live; 0.5.1 has taller Continuous pieces, not yet seen in Live). 81 core tests.
-- **Waiting on the user:** the reference clips: about 10 clips exported from Live (.mid) with the notation you expect (a photo or description is enough), to turn into golden tests. Installing 0.5.1 is optional (small change).
-- **Next:** Phase 6: drum profile and map editor, guitar and bass profiles, tab algorithm.
+- **Done:** Phases 0-5 with their Live tests. Phase 6 code: build 0.6.0 (102 core tests); its Live check is next.
+- **Waiting on the user:** (1) install 0.6.0 (admin PowerShell, Live closed, `scripts\install.ps1`); (2) the reference clips: about 10 clips exported from Live (.mid) with the notation you expect; (3) later, the user's own guitar riffs and basslines to confirm the tab (Phase 6 gate).
+- **Next:** the Phase 6 Live check (`docs/phase6-tests.md`, then `docs/phase6-results.md`), then Phase 7 (editor).

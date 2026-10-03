@@ -1,5 +1,6 @@
 #pragma once
 
+#include "Instruments.h"
 #include "Json.h"
 #include "Reading.h"
 #include "Score.h"
@@ -199,6 +200,29 @@ struct TranscriptionInput
 
 // The whole pipeline, for a piano.
 TranscriptionResult transcribePiano (const ResolvedCapture&, const TranscriptionSettings&);
+
+// Drums: one percussion staff, notes placed by the drum map. Notes the map does not know are left out
+// with a warning.
+TranscriptionResult transcribeDrums (const ResolvedCapture&, const TranscriptionSettings&, const DrumMap&);
+
+// Where a note is played on a fretted instrument. `string` 0 is the lowest string.
+struct TabNote
+{
+    int pitch = 0;
+    int string = 0;
+    int fret = 0;
+};
+
+// The strings and frets for a sequence of chords (each a list of MIDI notes), chosen so that the hand
+// moves little and stays within a span. A chord comes back without the notes that cannot be played
+// (out of range, or more than there are strings, or no way to play them together).
+std::vector<std::vector<TabNote>> assignTab (const std::vector<std::vector<int>>& chords, const std::vector<int>& openStrings);
+
+// Guitar or bass: standard notation (one voice, chords allowed) and a tablature staff under it.
+TranscriptionResult transcribeFretted (const ResolvedCapture&, const TranscriptionSettings&, InstrumentType);
+
+// Whichever the profile says.
+TranscriptionResult transcribe (const ResolvedCapture&, const TranscriptionSettings&, const Profile&);
 
 // A readable text form of a score for tests and for the page: one line per measure and voice,
 // e.g. "m3 R v1: C5/8 D5/8 r/4 [C4 E4 G4]/2~".

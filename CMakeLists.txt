@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.22)
 
-project(TRANSCRIBER VERSION 0.5.1)
+project(TRANSCRIBER VERSION 0.6.0)
 
 # Third-party code is downloaded at configure time (pinned, hash-checked) rather than
 # committed, to keep the repository and local checkout small.
@@ -38,6 +38,9 @@ set(TRANSCRIBER_CORE_SOURCES
     source/core/CaptureModel.cpp
     source/core/Commands.cpp
     source/core/Document.cpp
+    source/core/Drums.cpp
+    source/core/Fretted.cpp
+    source/core/Instruments.cpp
     source/core/Json.cpp
     source/core/Key.cpp
     source/core/Mei.cpp
@@ -66,6 +69,7 @@ juce_add_binary_data(TranscriberWebData
         web/index.html
         web/app.js
         web/score.js
+        web/drums.js
         web/style.css
         web/piano.mei
         web/drums.mei
@@ -94,6 +98,7 @@ enable_testing()
 
 add_executable(TranscriberCoreTests
     tests/core/test_main.cpp
+    tests/core/test_instruments.cpp
     tests/core/test_mei.cpp
     tests/core/test_score.cpp
     tests/core/test_transcribe.cpp

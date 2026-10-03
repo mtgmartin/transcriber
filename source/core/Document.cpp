@@ -282,6 +282,13 @@ void Version::setReading (const Reading& r)
     regenerate();
 }
 
+void Version::setProfile (const Profile& p)
+{
+    profile = p.toJson();
+    ++readingRevision;
+    regenerate();
+}
+
 void Version::setTranscriptionSettings (const TranscriptionSettings& s)
 {
     settings = s.toJson();
@@ -294,7 +301,7 @@ void Version::regenerate()
     if (scoreEdited)
         return;
 
-    auto result = transcribePiano (resolved(), transcriptionSettings());
+    auto result = transcribe (resolved(), transcriptionSettings(), instrument());
     score = std::move (result.score);
     key = result.key;
     report = std::move (result.report);
@@ -371,7 +378,7 @@ std::string Document::addVersion (const RawCapture& capture, const Reading& read
     v.capture.recording = false;
     v.reading = reading;
     v.detection = detection;
-    v.profile.set ("type", "piano");   // the instrument profile arrives in Phase 5/6
+    v.profile = defaultProfile.isObject() && defaultProfile.has ("type") ? defaultProfile : Profile().toJson();
     v.settings = TranscriptionSettings().toJson();
     v.regenerate();
 
@@ -464,6 +471,7 @@ Json Document::toJson() const
     j.set ("nextVersionId", idCounter);
     j.set ("uiPrefs", uiPrefs);
     j.set ("drumMaps", drumMaps);
+    j.set ("defaultProfile", defaultProfile);
 
     auto versions = Json::array();
 
@@ -511,6 +519,7 @@ LoadResult Document::fromJson (const Json& source, Document& result, std::string
     d.idCounter = std::max<int64_t> (1, j.get ("nextVersionId").asInt (1));
     d.uiPrefs = j.get ("uiPrefs").isObject() ? j.get ("uiPrefs") : Json::object();
     d.drumMaps = j.get ("drumMaps").isArray() ? j.get ("drumMaps") : Json::array();
+    d.defaultProfile = j.get ("defaultProfile").isObject() ? j.get ("defaultProfile") : Json::object();
 
     std::set<std::string> ids;
 

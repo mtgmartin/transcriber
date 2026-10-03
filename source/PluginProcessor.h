@@ -55,6 +55,10 @@ public:
     DiagnosticLog::BlockInfo getLatestBlockInfo() const;
     double getSampleRateForDisplay() const noexcept { return currentSampleRate.load(); }
 
+    // The latest note-on seen (for learning drum notes), and how many there have been.
+    int getLastNote() const noexcept { return lastNote.load(); }
+    uint32_t getNoteCount() const noexcept { return noteCount.load(); }
+
 private:
     void logHostInfo();
 
@@ -62,6 +66,8 @@ private:
     DiagnosticLog log;
 
     std::atomic<double> currentSampleRate { 0.0 };
+    std::atomic<int> lastNote { -1 };
+    std::atomic<uint32_t> noteCount { 0 };
     std::atomic<int> maxBlockSize { 0 };
     std::atomic<bool> nonRealtimePrepared { false };
     uint64_t blockIndex = 0;                  // audio thread only

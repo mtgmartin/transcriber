@@ -72,3 +72,20 @@ select:disabled, input:disabled { opacity: 0.5; }
 #selection-info { margin: 8px 0 0; min-height: 1.5em; }
 #zoom-out, #zoom-in { min-width: 32px; }
 #notation-pages.scroll .sheet { margin: 0 auto; box-shadow: none; }
+
+#drum-panel { margin: 4px 0 8px; padding: 6px 0; border-top: 1px solid var(--rule); }
+#drum-table { border-collapse: collapse; width: 100%; margin: 6px 0; font-size: 13px; }
+#drum-table th { text-align: left; color: var(--dim); font-weight: normal; padding: 2px 4px; }
+#drum-table td { padding: 2px 4px; vertical-align: middle; }
+#drum-table input[type=text] { width: 100%; min-width: 90px; }
+#drum-table input[type=number] { width: 58px; }
+#drum-table tr.learning { background: #3a3220; }
+#drum-table .note-name { color: var(--dim); font-size: 12px; margin-left: 4px; }
+input[type=text] { font: inherit; color: var(--ink); background: #26304a; border: 1px solid var(--rule); border-radius: 4px; padding: 4px 6px; }
+button.danger { background: #5a2323; border-color: #f08a8a; }
+[hidden] { display: none !important; }
+#drum-table td { white-space: nowrap; }
+#drum-table td .row { margin: 0; flex-wrap: nowrap; gap: 4px; }
+#drum-table .note-name { display: block; margin: 0; line-height: 1.1; font-size: 11px; }
+#drum-table select { max-width: 190px; }
+#drum-table button { padding: 3px 8px; }

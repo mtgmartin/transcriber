@@ -252,6 +252,7 @@ function noteName(midi) {
 
 function setSetting(name, value) { send("setSetting", { name: name, value: value }); }
 
+$("set-instrument").addEventListener("change", function (e) { send("setInstrument", { type: e.target.value }); });
 $("set-grid").addEventListener("change", function (e) { setSetting("grid", parseInt(e.target.value, 10)); });
 $("set-triplets").addEventListener("change", function (e) { setSetting("triplets", e.target.checked); });
 $("set-pickup").addEventListener("change", function (e) { setSetting("autoPickup", e.target.checked); });
@@ -266,10 +267,17 @@ $("set-key").addEventListener("change", function (e) {
 
 function showTranscription(s) {
   const has = !!s.settings;
+  const instrument = s.instrument || "piano";
   ["set-grid", "set-triplets", "set-split", "set-pickup", "set-key"].forEach(function (id) { $(id).disabled = !has || s.state === "recording"; });
 
+  // the instrument can be chosen before the first recording: it is used for the next one
+  $("set-instrument").disabled = s.state === "recording" || s.state === "armed";
+  if (document.activeElement !== $("set-instrument")) $("set-instrument").value = instrument;
+  $("grp-split").hidden = instrument !== "piano";
+  $("grp-key").hidden = instrument === "drums";
+
   if (!has) {
-    $("score-info").textContent = s.state === "recording" ? "The score is made when the recording stops." : "No score yet.";
+    $("score-info").textContent = s.state === "recording" ? "The score is made when the recording stops." : "No score yet. New recordings are written for: " + instrument + ".";
     $("score-text").textContent = "";
     return;
   }
@@ -284,10 +292,18 @@ function showTranscription(s) {
   $("split-name").textContent = noteName(cfg.splitPoint);
 
   const lines = [];
-  lines.push("Key: " + keyName(t.keyFifths, t.keyMinor) + " (" + signatureText(t.keyFifths) + ")" +
-             (cfg.keyTonic < 0 ? ", detected" : ", set by you") + " · " + t.measures + " measure" + (t.measures === 1 ? "" : "s") +
-             " · up to " + t.voices + " voice" + (t.voices === 1 ? "" : "s") + " in a hand" +
-             (t.edited ? " · edited by you" : ""));
+  const measures = t.measures + " measure" + (t.measures === 1 ? "" : "s");
+  const edited = t.edited ? " · edited by you" : "";
+  if (instrument === "drums") {
+    lines.push("Drums · " + measures + (t.voices > 1 ? " · hands and feet in two voices" : "") + edited);
+  } else if (instrument === "piano") {
+    lines.push("Key: " + keyName(t.keyFifths, t.keyMinor) + " (" + signatureText(t.keyFifths) + ")" +
+               (cfg.keyTonic < 0 ? ", detected" : ", set by you") + " · " + measures +
+               " · up to " + t.voices + " voice" + (t.voices === 1 ? "" : "s") + " in a hand" + edited);
+  } else {
+    lines.push((instrument === "bass" ? "Bass" : "Guitar") + " with tab · key: " + keyName(t.keyFifths, t.keyMinor) +
+               (cfg.keyTonic < 0 ? ", detected" : ", set by you") + " · " + measures + edited);
+  }
   t.warnings.forEach(function (w) { lines.push("Note: " + w); });
   $("score-info").className = "result" + (t.warnings.length ? " warn" : "");
   $("score-info").textContent = lines.join("\n");

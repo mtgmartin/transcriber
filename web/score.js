@@ -186,9 +186,11 @@
       return;
     }
 
-    // a note inside a chord selects the chord
+    // a note inside a chord selects the chord; so does a note of a tablature group of several notes
     const chord = target.parentElement && target.parentElement.closest ? target.parentElement.closest("g.chord") : null;
-    selectedId = (chord || target).id;
+    const group = target.closest("g.tabGrp");
+    const tabChord = group && group.querySelectorAll("g.note").length > 1 ? group : null;
+    selectedId = (chord || tabChord || target).id;
     applySelection(true);
     info.textContent = "…";
     send("nodeInfo", { id: selectedId });

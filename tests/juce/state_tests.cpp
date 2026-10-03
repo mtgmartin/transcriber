@@ -450,7 +450,95 @@ namespace
         CHECK_STR (loaded.getProperty ("scoreText", {}).toString().toRawUTF8(), status.getProperty ("scoreText", {}).toString().toRawUTF8());
     }
 
+    int numberOfDrumMaps (const juce::var& status)
+    {
+        const auto* list = status.getProperty ("drumMaps", {}).getArray();
+        return list != nullptr ? list->size() : -1;
+    }
+
+    void testInstrumentsAndDrumMaps()
+    {
+        CaptureService service;
+        record (service, 4, 0);
+        CHECK (waitForVersions (service, 1));
+
+        auto status = service.getStatus();
+        CHECK_STR (status.getProperty ("instrument", {}).toString().toRawUTF8(), "piano");
+
+        // the instrument changes the score of the shown take
+        service.setInstrument ("guitar");
+        status = service.getStatus();
+        CHECK_STR (status.getProperty ("instrument", {}).toString().toRawUTF8(), "guitar");
+        CHECK (status.getProperty ("scoreText", {}).toString().contains ("S2 v1:"));
+
+        service.setInstrument ("drums");
+        status = service.getStatus();
+        CHECK_STR (status.getProperty ("instrument", {}).toString().toRawUTF8(), "drums");
+        CHECK_STR (status.getProperty ("drumMapId", {}).toString().toRawUTF8(), "gm");
+        CHECK_EQ (numberOfDrumMaps (status), 2);
+        CHECK (status.getProperty ("scoreText", {}).toString().contains ("S1 v1:"));
+
+        // a map of your own is stored, selected and used
+        const juce::String mine = "{\"id\":\"mine\",\"name\":\"My kit\",\"entries\":[{\"note\":48,\"name\":\"Rack tom\",\"loc\":6,\"head\":\"normal\",\"voice\":1,\"ghostBelow\":0},"
+                                  "{\"note\":60,\"name\":\"Pad\",\"loc\":9,\"head\":\"x\",\"voice\":1,\"ghostBelow\":0}]}";
+        CHECK (service.saveDrumMap (mine).isEmpty());
+        status = service.getStatus();
+        CHECK_STR (status.getProperty ("drumMapId", {}).toString().toRawUTF8(), "mine");
+        CHECK_EQ (numberOfDrumMaps (status), 3);
+        CHECK (status.getProperty ("scoreText", {}).toString().contains ("Rack_tom"));
+        CHECK (status.getProperty ("scoreText", {}).toString().contains ("Pad"));
+        CHECK (service.getDrumMapJson ("mine").contains ("Rack tom"));
+
+        // errors are reported, nothing changes
+        CHECK (! service.saveDrumMap ("not json").isEmpty());
+        CHECK (! service.saveDrumMap ("{\"entries\":3}").isEmpty());
+        CHECK (! service.importDrumMap ("[]").isEmpty());
+        CHECK_EQ (numberOfDrumMaps (service.getStatus()), 3);
+
+        // a built-in map that was changed is saved as a copy
+        CHECK (service.saveDrumMap ("{\"id\":\"gm\",\"name\":\"Edited GM\",\"entries\":[{\"note\":48,\"name\":\"Tom\",\"loc\":4}]}").isEmpty());
+        status = service.getStatus();
+        CHECK_STR (status.getProperty ("drumMapId", {}).toString().toRawUTF8(), "user-1");
+        CHECK_EQ (numberOfDrumMaps (status), 4);
+        CHECK (service.getDrumMapJson ("gm").contains ("Snare"));    // the built-in one is unchanged
+
+        // an imported map whose id is taken gets a new one
+        CHECK (service.importDrumMap (mine).isEmpty());
+        status = service.getStatus();
+        CHECK_STR (status.getProperty ("drumMapId", {}).toString().toRawUTF8(), "user-2");
+        CHECK_EQ (numberOfDrumMaps (status), 5);
+
+        // saved and loaded: the maps, the instrument and the score come back
+        juce::MemoryBlock saved;
+        service.saveState (saved);
+        CaptureService again;
+        again.loadState (saved.getData(), saved.getSize());
+        const auto loaded = again.getStatus();
+        CHECK_STR (loaded.getProperty ("instrument", {}).toString().toRawUTF8(), "drums");
+        CHECK_STR (loaded.getProperty ("drumMapId", {}).toString().toRawUTF8(), "user-2");
+        CHECK_EQ (numberOfDrumMaps (loaded), 5);
+        CHECK_STR (loaded.getProperty ("scoreText", {}).toString().toRawUTF8(), status.getProperty ("scoreText", {}).toString().toRawUTF8());
+
+        // choosing a built-in map, deleting the one in use
+        service.selectDrumMap ("gm2");
+        CHECK_STR (service.getStatus().getProperty ("drumMapId", {}).toString().toRawUTF8(), "gm2");
+        service.selectDrumMap ("mine");
+        service.deleteDrumMap ("mine");
+        status = service.getStatus();
+        CHECK_STR (status.getProperty ("drumMapId", {}).toString().toRawUTF8(), "gm");
+        CHECK_EQ (numberOfDrumMaps (status), 4);
+        service.deleteDrumMap ("gm");                                 // built-in maps cannot be deleted
+        CHECK_EQ (numberOfDrumMaps (service.getStatus()), 4);
+
+        // a new recording gets the instrument that was chosen last
+        service.setInstrument ("bass");
+        record (service, 2, 3);
+        CHECK (waitForVersions (service, 2));
+        CHECK_STR (service.getStatus().getProperty ("instrument", {}).toString().toRawUTF8(), "bass");
+    }
+
     struct Test { const char* name; void (*fn)(); };
+
 
     const Test tests[] = {
         { "codec: round trips", testCodecRoundTrips },
@@ -462,6 +550,7 @@ namespace
         { "service: an unreadable state is kept", testUnreadableStateIsKept },
         { "service: the state size is reported", testStateSizeIsReported },
         { "service: transcription settings", testTranscriptionSettings },
+        { "service: instruments and drum maps", testInstrumentsAndDrumMaps },
     };
 }
 

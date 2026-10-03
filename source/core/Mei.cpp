@@ -1,5 +1,7 @@
 #include "Mei.h"
 
+#include "Instruments.h"
+
 #include <algorithm>
 #include <cctype>
 #include <cmath>
@@ -117,17 +119,18 @@ namespace
             out += "  <scoreDef keysig=\"" + keySignature (fifths) + "\" meter.count=\"" + std::to_string (num)
                  + "\" meter.unit=\"" + std::to_string (den) + "\">\n   <staffGrp";
 
+            bool hasTab = false;
+
+            for (const auto* staff : staves)
+                hasTab = hasTab || staff->prop ("kind").asString() == "tab";
+
             if (staves.size() > 1)
-                out += " symbol=\"brace\" bar.thru=\"true\"";
+                out += hasTab ? " symbol=\"bracket\" bar.thru=\"true\"" : " symbol=\"brace\" bar.thru=\"true\"";
 
             out += ">\n";
 
             for (const auto* staff : staves)
-            {
-                const auto clef = staff->prop ("clef").asString();
-                out += "    <staffDef n=\"" + std::to_string (staff->prop ("n").asInt()) + "\" lines=\"5\" clef.shape=\""
-                     + (clef.empty() ? "G" : clef) + "\" clef.line=\"" + (clef == "F" ? "4" : "2") + "\"/>\n";
-            }
+                staffDefinition (*staff);
 
             out += "   </staffGrp>\n  </scoreDef>\n  <section>\n";
 
@@ -180,6 +183,11 @@ namespace
                             tempoMark (c, (int) staff->prop ("n").asInt(), den);
                 }
 
+                for (const auto& [id, text] : directions)
+                    out += "    <dir startid=\"#" + xmlEscape (id) + "\" place=\"above\" staff=\"1\">" + xmlEscape (text) + "</dir>\n";
+
+                directions.clear();
+
                 out += "   </measure>\n";
             }
 
@@ -190,9 +198,47 @@ namespace
     private:
         const Score& score;
         std::string out;
+        std::string kind;                 // "perc", "tab" or empty: the staff being written
+        int layerNumber = 1;
+        std::vector<std::pair<std::string, std::string>> directions;   // (id, text) of marks above notes, written after the staves
+
+        // The clef of a staff, and for a tablature staff its lines and tuning.
+        void staffDefinition (const Node& staff)
+        {
+            const auto clef = staff.prop ("clef").asString();
+            const auto n = std::to_string (staff.prop ("n").asInt());
+
+            if (clef == "TAB")
+            {
+                const auto strings = (int) staff.prop ("strings").asInt (6);
+                const auto open = openStrings (strings == 4 ? InstrumentType::bass : InstrumentType::guitar);
+                out += "    <staffDef n=\"" + n + "\" lines=\"" + std::to_string (strings) + "\" notationtype=\"tab.guitar\" clef.shape=\"TAB\">\n"
+                       "     <tuning>";
+
+                for (int course = 1; course <= (int) open.size(); ++course)
+                {
+                    const auto midi = open[open.size() - (size_t) course];
+                    static const char* const names[12] = { "c", "c", "d", "d", "e", "f", "f", "g", "g", "a", "a", "b" };
+                    out += "<course n=\"" + std::to_string (course) + "\" pname=\"" + names[midi % 12] + "\" oct=\"" + std::to_string (midi / 12 - 1) + "\"/>";
+                }
+
+                out += "</tuning>\n    </staffDef>\n";
+                return;
+            }
+
+            std::string shape = "G", line = "2", displacement;
+
+            if (clef == "F" || clef == "F8") { shape = "F"; line = "4"; }
+            if (clef == "perc")              { shape = "perc"; line = ""; }
+            if (clef == "G8" || clef == "F8") displacement = " clef.dis=\"8\" clef.dis.place=\"below\"";
+
+            out += "    <staffDef n=\"" + n + "\" lines=\"5\" clef.shape=\"" + shape + "\"" + (line.empty() ? "" : " clef.line=\"" + line + "\"")
+                 + displacement + "/>\n";
+        }
 
         void staffContent (const Node& staff, const Node& measure)
         {
+            kind = staff.prop ("kind").asString();
             out += "    <staff n=\"" + std::to_string (staff.prop ("n").asInt()) + "\">\n";
 
             for (const auto& layer : measure.children)
@@ -200,6 +246,7 @@ namespace
                 if (layer.type != nodeType::layer)
                     continue;
 
+                layerNumber = (int) layer.prop ("n").asInt (1);
                 out += "     <layer xml:id=\"" + xmlEscape (layer.id) + "\" n=\"" + std::to_string (layer.prop ("n").asInt()) + "\">\n";
                 layerContent (layer);
                 out += "     </layer>\n";
@@ -304,25 +351,44 @@ namespace
                 attribute (s, "dots", std::to_string (e.prop ("dots").asInt()));
         }
 
-        static std::string noteElement (const Node& n, bool withDuration, const Node* durationSource)
+        std::string noteElement (const Node& n, bool withDuration, const Node* durationSource, const std::string& idOwner)
         {
-            std::string s = "<note xml:id=\"" + xmlEscape (n.id) + "\"";
+            std::string s = "<note xml:id=\"" + xmlEscape (idOwner.empty() ? n.id : idOwner) + "\"";
 
             if (withDuration && durationSource != nullptr)
                 durationAttributes (s, *durationSource);
 
-            attribute (s, "pname", lowerLetter (n.prop ("step").asString()));
-            attribute (s, "oct", std::to_string (n.prop ("oct").asInt()));
-
-            const auto alter = (int) n.prop ("alter").asInt();
-
-            if (n.has ("accid"))
+            if (kind == "perc")
             {
-                attribute (s, "accid", n.prop ("accid").asString());
+                attribute (s, "loc", std::to_string (n.prop ("loc").asInt()));
+                const auto head = n.prop ("head").asString();
+
+                if (head == "x" || head == "open-x")
+                    attribute (s, "head.shape", "x");
+                else if (head == "diamond")
+                    attribute (s, "head.shape", "diamond");
+
+                if (n.prop ("ghost").asBool())
+                    attribute (s, "head.mod", "paren");
+
+                if (withDuration)
+                    attribute (s, "stem.dir", layerNumber == 1 ? "up" : "down");
             }
-            else if (const auto* name = alterName (alter))
+            else
             {
-                attribute (s, "accid.ges", name);
+                attribute (s, "pname", lowerLetter (n.prop ("step").asString()));
+                attribute (s, "oct", std::to_string (n.prop ("oct").asInt()));
+
+                const auto alter = (int) n.prop ("alter").asInt();
+
+                if (n.has ("accid"))
+                {
+                    attribute (s, "accid", n.prop ("accid").asString());
+                }
+                else if (const auto* name = alterName (alter))
+                {
+                    attribute (s, "accid.ges", name);
+                }
             }
 
             const auto tie = n.prop ("tie").asString();
@@ -332,6 +398,21 @@ namespace
 
             s += "/>";
             return s;
+        }
+
+        // A note of a tablature staff: the course (1 = highest string) and the fret.
+        static std::string tabNoteElement (const Node& n, const std::string& idOwner)
+        {
+            std::string s = "<note xml:id=\"" + xmlEscape (idOwner.empty() ? n.id : idOwner) + "\"";
+            attribute (s, "tab.course", std::to_string (n.prop ("course").asInt()));
+            attribute (s, "tab.fret", std::to_string (n.prop ("fret").asInt()));
+
+            const auto tie = n.prop ("tie").asString();
+
+            if (! tie.empty())
+                attribute (s, "tie", tie);
+
+            return s + "/>";
         }
 
         void event (const Node& e)
@@ -349,21 +430,59 @@ namespace
                 std::string s = "<rest xml:id=\"" + xmlEscape (e.id) + "\"";
                 durationAttributes (s, e);
                 out += pad + s + "/>\n";
+                return;
             }
-            else if (e.type == nodeType::chord)
+
+            if (kind == "tab")
+            {
+                std::string s = "<tabGrp";
+
+                // a group of several notes carries the id of the chord; a single note keeps its own id
+                if (e.type == nodeType::chord)
+                    s += " xml:id=\"" + xmlEscape (e.id) + "\"";
+
+                durationAttributes (s, e);
+                out += pad + s + "><tabDurSym/>";
+
+                if (e.type == nodeType::chord)
+                    for (const auto& n : e.children)
+                        out += tabNoteElement (n, {});
+                else
+                    out += tabNoteElement (e, {});
+
+                out += "</tabGrp>\n";
+                return;
+            }
+
+            if (e.type == nodeType::chord)
             {
                 std::string s = "<chord xml:id=\"" + xmlEscape (e.id) + "\"";
                 durationAttributes (s, e);
+
+                if (kind == "perc")
+                    attribute (s, "stem.dir", layerNumber == 1 ? "up" : "down");
+
                 out += pad + s + ">\n";
 
+                bool open = false;
+
                 for (const auto& n : e.children)
-                    out += pad + " " + noteElement (n, false, nullptr) + "\n";
+                {
+                    out += pad + " " + noteElement (n, false, nullptr, {}) + "\n";
+                    open = open || n.prop ("head").asString() == "open-x";
+                }
 
                 out += pad + "</chord>\n";
+
+                if (open)
+                    directions.push_back ({ e.id, "o" });
             }
             else if (e.type == nodeType::note)
             {
-                out += pad + noteElement (e, true, &e) + "\n";
+                out += pad + noteElement (e, true, &e, {}) + "\n";
+
+                if (e.prop ("head").asString() == "open-x")
+                    directions.push_back ({ e.id, "o" });
             }
         }
 
@@ -420,8 +539,23 @@ namespace
         }
     }
 
+    std::string lowerCase (std::string s)
+    {
+        for (auto& c : s)
+            c = (char) std::tolower ((unsigned char) c);
+
+        return s;
+    }
+
+    // "snare", "string 3 fret 5" or "Eb5": what a note is called.
     std::string pitchText (const Node& n)
     {
+        if (n.has ("drum"))
+            return lowerCase (n.prop ("drum").asString()) + (n.prop ("ghost").asBool() ? " (ghost note)" : "");
+
+        if (n.has ("course"))
+            return "string " + std::to_string (n.prop ("course").asInt()) + " fret " + std::to_string (n.prop ("fret").asInt());
+
         std::string s (1, n.prop ("step").asString().empty() ? '?' : n.prop ("step").asString()[0]);
         const auto alter = (int) n.prop ("alter").asInt();
 
@@ -464,7 +598,15 @@ std::string describeNode (const Score& score, const std::string& id)
     std::string text;
 
     if (staff != nullptr)
-        text += staff->prop ("clef").asString() == "F" ? "Left hand" : (staff->prop ("n").asInt() == 1 ? "Right hand" : "Staff " + std::to_string (staff->prop ("n").asInt()));
+    {
+        const auto clef = staff->prop ("clef").asString();
+
+        if (clef == "perc")         text += "Drums";
+        else if (clef == "TAB")     text += "Tab";
+        else if (clef == "F")       text += "Left hand";
+        else if (clef == "G")       text += staff->prop ("n").asInt() == 1 ? "Right hand" : "Staff " + std::to_string (staff->prop ("n").asInt());
+        else                        text += "Staff";
+    }
 
     auto add = [&] (const std::string& part)
     {
@@ -500,13 +642,14 @@ std::string describeNode (const Score& score, const std::string& id)
         for (const auto& c : event->children)
             names += (names.empty() ? "" : " ") + pitchText (c);
 
+        const bool drumChord = ! event->children.empty() && event->children.front().has ("drum");
         const bool tied = ! event->children.empty() && (event->children.front().prop ("tie").asString() == "i" || event->children.front().prop ("tie").asString() == "m");
-        add (value + " chord " + names + (tied ? ", tied to the next" : ""));
+        add (value + (drumChord ? " hit " : " chord ") + names + (tied ? ", tied to the next" : ""));
     }
     else
     {
         const auto tie = event->prop ("tie").asString();
-        add (value + " note " + pitchText (*event) + (tie == "i" || tie == "m" ? ", tied to the next note" : ""));
+        add (value + (event->has ("drum") ? " hit " : " note ") + pitchText (*event) + (tie == "i" || tie == "m" ? ", tied to the next note" : ""));
 
         if (event->prop ("offGrid").asBool())
             add ("was far from the grid");

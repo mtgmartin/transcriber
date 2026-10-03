@@ -36,6 +36,17 @@ public:
     // "splitPoint", "autoPickup", "keyTonic" (-1 = detect, else 0-11) and "keyMinor".
     void setTranscriptionSetting (const juce::String& name, const juce::var& value);
 
+    // The instrument of the version that is shown ("piano", "drums", "guitar", "bass"); new recordings get it too.
+    void setInstrument (const juce::String& type);
+
+    // Drum maps. The built-in ones ("gm", "gm2") cannot be changed; saving a changed built-in map makes a copy.
+    // The functions that can fail give an empty string on success, else the reason.
+    void selectDrumMap (const juce::String& id);
+    juce::String saveDrumMap (const juce::String& jsonText);      // the map as JSON; selects it
+    juce::String importDrumMap (const juce::String& jsonText);    // a map from a file; selects it
+    void deleteDrumMap (const juce::String& id);
+    juce::String getDrumMapJson (const juce::String& id) const;   // an unknown id gives the General MIDI map
+
     // Versions
     void selectVersion (const juce::String& id);
     void renameVersion (const juce::String& id, const juce::String& name);
@@ -69,6 +80,15 @@ private:
     void addVersionIfRecordingEnded();   // the mutex must be held
     void updateStateSize() const;
     uint64_t getRevisionLocked() const;   // the mutex must be held
+
+    // The mutex must be held for these.
+    trs::DrumMap drumMapById (const std::string& id) const;
+    std::string selectedDrumMapId() const;
+    trs::Profile profileFor (trs::InstrumentType) const;
+    void applyDrumMapToProfiles (const trs::DrumMap&);
+    std::string addUserDrumMap (trs::DrumMap, bool replaceSameId);
+
+    uint64_t drumMapRevision = 0;
 
     trs::CaptureEngine engine;
     mutable std::mutex mutex;

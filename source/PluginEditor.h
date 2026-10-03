@@ -24,6 +24,8 @@ private:
 
     void compareWithMidiFile();
     void savePdf (const juce::var& payload);
+    void importDrumMap();
+    void exportDrumMap (const juce::String& id);
 
     TranscriberProcessor& processor;
     std::unique_ptr<juce::FileChooser> chooser;

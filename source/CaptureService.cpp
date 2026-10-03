@@ -182,6 +182,203 @@ void CaptureService::setTranscriptionSetting (const juce::String& name, const ju
         v->setTranscriptionSettings (s);
 }
 
+//==============================================================================
+trs::DrumMap CaptureService::drumMapById (const std::string& id) const
+{
+    for (const auto& item : document.drumMaps.items())
+    {
+        trs::DrumMap map;
+
+        if (trs::DrumMap::fromJson (item, map) && map.id == id)
+            return map;
+    }
+
+    return trs::drumPreset (id);
+}
+
+std::string CaptureService::selectedDrumMapId() const
+{
+    const auto id = document.uiPrefs.get ("drumMapId").asString();
+    return id.empty() ? "gm" : id;
+}
+
+trs::Profile CaptureService::profileFor (trs::InstrumentType type) const
+{
+    trs::Profile p;
+    p.type = type;
+    p.drumMap = drumMapById (selectedDrumMapId());
+    return p;
+}
+
+void CaptureService::setInstrument (const juce::String& type)
+{
+    const std::lock_guard<std::mutex> lock (mutex);
+    const auto profile = profileFor (trs::instrumentFromName (type.toStdString()));
+    document.defaultProfile = profile.toJson();
+    document.markChanged();
+
+    if (auto* v = document.activeMutable())
+        v->setProfile (profile);
+}
+
+// The map in use changed: new takes and the shown take (when it is for drums) get the new copy.
+void CaptureService::applyDrumMapToProfiles (const trs::DrumMap& map)
+{
+    if (trs::Profile::fromJson (document.defaultProfile).type == trs::InstrumentType::drums)
+    {
+        trs::Profile p;
+        p.type = trs::InstrumentType::drums;
+        p.drumMap = map;
+        document.defaultProfile = p.toJson();
+    }
+
+    if (auto* v = document.activeMutable())
+    {
+        auto p = v->instrument();
+
+        if (p.type == trs::InstrumentType::drums)
+        {
+            p.drumMap = map;
+            v->setProfile (p);
+        }
+    }
+
+    document.markChanged();
+    ++drumMapRevision;
+}
+
+void CaptureService::selectDrumMap (const juce::String& id)
+{
+    const std::lock_guard<std::mutex> lock (mutex);
+    const auto map = drumMapById (id.toStdString());
+    document.uiPrefs.set ("drumMapId", map.id);
+    applyDrumMapToProfiles (map);
+}
+
+std::string CaptureService::addUserDrumMap (trs::DrumMap map, bool replaceSameId)
+{
+    bool builtIn = false;
+
+    for (const auto& preset : trs::drumPresets())
+        builtIn = builtIn || preset.id == map.id;
+
+    auto exists = [&] (const std::string& id)
+    {
+        for (const auto& item : document.drumMaps.items())
+            if (item.get ("id").asString() == id)
+                return true;
+
+        return false;
+    };
+
+    // a built-in id, or an id that is taken when we may not replace, gets a new one
+    if (builtIn || (exists (map.id) && ! replaceSameId))
+    {
+        int n = 1;
+
+        while (exists ("user-" + std::to_string (n)))
+            ++n;
+
+        map.id = "user-" + std::to_string (n);
+    }
+
+    auto list = trs::Json::array();
+    bool replaced = false;
+
+    for (const auto& item : document.drumMaps.items())
+    {
+        if (item.get ("id").asString() == map.id)
+        {
+            list.push (map.toJson());
+            replaced = true;
+        }
+        else
+        {
+            list.push (item);
+        }
+    }
+
+    if (! replaced)
+        list.push (map.toJson());
+
+    document.drumMaps = std::move (list);
+    document.uiPrefs.set ("drumMapId", map.id);
+    applyDrumMapToProfiles (map);
+    return map.id;
+}
+
+juce::String CaptureService::saveDrumMap (const juce::String& jsonText)
+{
+    trs::Json json;
+    std::string error;
+
+    if (! trs::Json::parse (jsonText.toStdString(), json, &error))
+        return "The drum map could not be read: " + juce::String (error);
+
+    trs::DrumMap map;
+
+    if (! trs::DrumMap::fromJson (json, map, &error))
+        return juce::String::fromUTF8 (error.c_str());
+
+    const std::lock_guard<std::mutex> lock (mutex);
+    addUserDrumMap (std::move (map), true);
+    return {};
+}
+
+juce::String CaptureService::importDrumMap (const juce::String& jsonText)
+{
+    trs::Json json;
+    std::string error;
+
+    if (! trs::Json::parse (jsonText.toStdString(), json, &error))
+        return "This file is not a drum map (it is not valid JSON).";
+
+    trs::DrumMap map;
+
+    if (! trs::DrumMap::fromJson (json, map, &error))
+        return juce::String::fromUTF8 (error.c_str());
+
+    const std::lock_guard<std::mutex> lock (mutex);
+    addUserDrumMap (std::move (map), false);
+    return {};
+}
+
+void CaptureService::deleteDrumMap (const juce::String& id)
+{
+    const std::lock_guard<std::mutex> lock (mutex);
+    auto list = trs::Json::array();
+    bool removed = false;
+
+    for (const auto& item : document.drumMaps.items())
+    {
+        if (item.get ("id").asString() == id.toStdString())
+            removed = true;
+        else
+            list.push (item);
+    }
+
+    if (! removed)
+        return;
+
+    document.drumMaps = std::move (list);
+
+    if (selectedDrumMapId() == id.toStdString())
+    {
+        document.uiPrefs.set ("drumMapId", "gm");
+        applyDrumMapToProfiles (trs::drumPreset ("gm"));
+    }
+
+    document.markChanged();
+    ++drumMapRevision;
+}
+
+juce::String CaptureService::getDrumMapJson (const juce::String& id) const
+{
+    const std::lock_guard<std::mutex> lock (mutex);
+    const auto map = drumMapById (id.toStdString());
+    return juce::String::fromUTF8 (map.toJson().dump().c_str());
+}
+
 void CaptureService::selectVersion (const juce::String& id)
 {
     const std::lock_guard<std::mutex> lock (mutex);
@@ -308,6 +505,9 @@ juce::var CaptureService::getStatus() const
         st->setProperty ("keyMinor", settings.keyMinor);
         o->setProperty ("settings", juce::var (st));
 
+        const auto profile = v->instrument();
+        o->setProperty ("instrument", juce::String (trs::instrumentName (profile.type)));
+
         auto* t = new juce::DynamicObject();
         t->setProperty ("keyTonic", v->key.tonic);
         t->setProperty ("keyMinor", v->key.minor);
@@ -343,6 +543,33 @@ juce::var CaptureService::getStatus() const
 
         o->setProperty ("scoreText", juce::String::fromUTF8 (scoreTextCache.c_str()));
         o->setProperty ("scoreKey", juce::String (key));
+    }
+
+    // the instrument of the shown take, or the default for the next one; the drum maps
+    if (live || v == nullptr)
+        o->setProperty ("instrument", juce::String (trs::instrumentName (trs::Profile::fromJson (document.defaultProfile).type)));
+
+    {
+        juce::Array<juce::var> maps;
+
+        auto add = [&] (const std::string& id, const std::string& name, bool builtIn)
+        {
+            auto* m = new juce::DynamicObject();
+            m->setProperty ("id", juce::String (id));
+            m->setProperty ("name", juce::String::fromUTF8 (name.c_str()));
+            m->setProperty ("builtIn", builtIn);
+            maps.add (juce::var (m));
+        };
+
+        for (const auto& preset : trs::drumPresets())
+            add (preset.id, preset.name, true);
+
+        for (const auto& item : document.drumMaps.items())
+            add (item.get ("id").asString(), item.get ("name").asString(), false);
+
+        o->setProperty ("drumMaps", maps);
+        o->setProperty ("drumMapId", juce::String (selectedDrumMapId()));
+        o->setProperty ("drumMapRevision", (juce::int64) drumMapRevision);
     }
 
     o->setProperty ("versions", versions);

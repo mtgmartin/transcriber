@@ -52,17 +52,49 @@
     </div>
     <div class="row" id="settings-row">
       <span>Notation</span>
+      <label for="set-instrument">Instrument</label>
+      <select id="set-instrument">
+        <option value="piano">Piano</option><option value="drums">Drums</option><option value="guitar">Guitar</option><option value="bass">Bass</option>
+      </select>
       <label for="set-grid">Grid</label>
       <select id="set-grid">
         <option value="4">1/4</option><option value="8">1/8</option><option value="16">1/16</option><option value="32">1/32</option>
       </select>
       <label><input type="checkbox" id="set-triplets"> Triplets</label>
-      <label for="set-split">Hands split at</label>
-      <input id="set-split" type="number" min="21" max="108" step="1" value="60">
-      <span class="dim" id="split-name"></span>
+      <span id="grp-split">
+        <label for="set-split">Hands split at</label>
+        <input id="set-split" type="number" min="21" max="108" step="1" value="60">
+        <span class="dim" id="split-name"></span>
+      </span>
       <label><input type="checkbox" id="set-pickup"> Pickup bar</label>
-      <label for="set-key">Key</label>
-      <select id="set-key"></select>
+      <span id="grp-key">
+        <label for="set-key">Key</label>
+        <select id="set-key"></select>
+      </span>
+    </div>
+    <div id="drum-panel" hidden>
+      <div class="row">
+        <label for="drum-map">Drum map</label>
+        <select id="drum-map"></select>
+        <button id="drum-edit" type="button">Edit…</button>
+        <button id="drum-import" type="button">Import…</button>
+        <button id="drum-export" type="button">Export…</button>
+        <button id="drum-delete" type="button" class="danger">Delete</button>
+      </div>
+      <p id="drum-warning" class="result warn" hidden></p>
+      <div id="drum-editor" hidden>
+        <p class="dim">Every MIDI note you want written needs a line here. To find a note, press play in Live, click <b>Learn</b> on a line and hit the pad: the note you play is taken.
+           (Live only sends notes while it is playing.) Last note played: <b id="drum-last">none yet</b>.</p>
+        <div class="row"><label for="drum-name">Name of the map</label><input id="drum-name" type="text" maxlength="60"></div>
+        <table id="drum-table"><thead><tr><th>Note</th><th>Drum</th><th>Place on the staff</th><th>Notehead</th><th>Played by</th><th>Ghost below</th><th></th></tr></thead><tbody></tbody></table>
+        <div class="row">
+          <button id="drum-add" type="button">Add a drum</button>
+          <button id="drum-save" type="button">Save map</button>
+          <button id="drum-cancel" type="button">Close</button>
+        </div>
+        <p class="dim" id="drum-builtin-note" hidden>This is a built-in map. Saving it makes a copy of your own.</p>
+      </div>
+      <p id="drum-msg" class="result"></p>
     </div>
     <p id="score-info" class="result">No score yet.</p>
     <details id="score-details"><summary>Score as text</summary><pre id="score-text" class="result"></pre></details>
@@ -130,5 +162,6 @@
 <script src="svg2pdf.umd.min.js"></script>
 <script src="app.js"></script>
 <script src="score.js"></script>
+<script src="drums.js"></script>
 </body>
 </html>

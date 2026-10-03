@@ -137,6 +137,12 @@ void TranscriberProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce:
                 continue;
             }
 
+            if (metadata.numBytes >= 3 && (metadata.data[0] & 0xF0) == 0x90 && metadata.data[2] > 0)
+            {
+                lastNote.store (metadata.data[1]);
+                noteCount.fetch_add (1);
+            }
+
             auto& e = events[(size_t) numEvents++];
             e.sampleOffset = metadata.samplePosition;
             e.size = juce::jmin (metadata.numBytes, 3);
