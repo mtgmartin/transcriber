@@ -20,6 +20,7 @@
   } catch (e) { /* no stored settings: use the defaults */ }
 
   let toolkit = null;
+  let layout = { systemSpacing: 0, staffSpacing: 0 };   // the spacing the user chose (0: the default)
   let mei = "";            // the MEI that is shown
   let meiKey = "";         // which score it is (version and revision)
   let wantedKey = "";      // the key the plugin has announced
@@ -45,14 +46,23 @@
     const scale = Math.max(10, Math.round(settings.zoom * 0.55));
     const width = Math.max(200, view.clientWidth - 28 - 17);   // room for the scroll bar
     const pageWidth = Math.floor(width * 100 / scale);
-    const common = { scale: scale, pageWidth: pageWidth, footer: "none", header: "none", font: "Bravura", breaks: "auto",
-                     spacingSystem: 14, justifyVertically: false };
+    // a score with line or page breaks of its own is laid out by them alone ("encoded"); otherwise the program breaks the lines
+    const common = { scale: scale, pageWidth: pageWidth, footer: "none", header: "none", font: "Bravura", breaks: /<(sb|pb)\/>/.test(mei) ? "encoded" : "auto",
+                     spacingSystem: layout.systemSpacing > 0 ? layout.systemSpacing : 14,
+                     spacingStaff: layout.staffSpacing > 0 ? layout.staffSpacing : 10, justifyVertically: false };
     return settings.view === "pages"
       ? Object.assign(common, { pageHeight: Math.floor(pageWidth * 1.4142), adjustPageHeight: false })
       : Object.assign(common, { pageHeight: Math.max(900, Math.floor(pageWidth * 1.4)), adjustPageHeight: false });
   }
 
   let renderToken = 0;
+  let infoBase = "";
+  let longLines = false;
+
+  function showInfo() {
+    renderInfo.textContent = infoBase + (longLines ? " · Some lines are longer than the window: use fewer measures per line, or a smaller zoom" : "");
+  }
+
   let observer = null;
 
   // Verovio lays out the whole score when it is loaded (the part that takes long); the pages are drawn
@@ -60,6 +70,7 @@
   function render() {
     if (!toolkit || !mei) return;
     const token = ++renderToken;
+    longLines = false;
     const scrollTop = view.scrollTop, scrollLeft = view.scrollLeft;
     const start = performance.now();
 
@@ -89,6 +100,11 @@
       el.innerHTML = toolkit.renderToSVG(parseInt(el.dataset.page, 10));
       el.style.width = el.style.height = "";   // the drawing sets the size
       ++drawn;
+
+      // a line that is longer than the window (too many measures between two breaks) is cut off at the edge: say so
+      const edge = el.getBoundingClientRect().right;
+      const tooLong = Array.from(el.querySelectorAll("g.system")).some(function (sys) { return sys.getBoundingClientRect().right > edge + 2; });
+      if (tooLong) { longLines = true; showInfo(); }
       applySelection(false);
     }
 
@@ -106,10 +122,11 @@
     lastWidth = view.clientWidth;
 
     const end = performance.now();
-    renderInfo.textContent = measures + " measure" + (measures === 1 ? "" : "s") + ", " + pages + " page" + (pages === 1 ? "" : "s") +
-                             " · laid out in " + Math.round(end - start) + " ms";
+    infoBase = measures + " measure" + (measures === 1 ? "" : "s") + ", " + pages + " page" + (pages === 1 ? "" : "s") +
+               " · laid out in " + Math.round(end - start) + " ms";
     const problem = toolkit.getLog();
-    if (problem) renderInfo.textContent += " · Verovio says: " + problem;
+    if (problem) infoBase += " · Verovio says: " + problem;
+    showInfo();
     log("scoreRender", { measures: measures, pages: pages, loadMs: Math.round(loaded - start), totalMs: Math.round(end - start),
                          view: settings.view, zoom: settings.zoom, meiBytes: mei.length });
   }
@@ -167,6 +184,7 @@
     }
     meiKey = m.key;
     mei = m.mei;
+    layout = m.layout || { systemSpacing: 0, staffSpacing: 0 };
     showEmpty(false);
     scheduleRender(0);
 

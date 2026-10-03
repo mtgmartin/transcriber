@@ -620,6 +620,21 @@ juce::var CaptureService::getMei() const
 
     o->setProperty ("key", juce::String (key));
     o->setProperty ("mei", juce::String::fromUTF8 (meiCache.c_str()));
+
+    // the spacing the user chose (0 = the page decides)
+    auto* layout = new juce::DynamicObject();
+    int systemSpacing = 0, staffSpacing = 0;
+
+    for (const auto& c : v->score.root().children)
+        if (c.type == trs::nodeType::layout)
+        {
+            systemSpacing = (int) c.prop ("systemSpacing").asInt();
+            staffSpacing = (int) c.prop ("staffSpacing").asInt();
+        }
+
+    layout->setProperty ("systemSpacing", systemSpacing);
+    layout->setProperty ("staffSpacing", staffSpacing);
+    o->setProperty ("layout", juce::var (layout));
     return juce::var (o);
 }
 

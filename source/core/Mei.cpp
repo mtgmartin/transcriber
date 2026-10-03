@@ -156,6 +156,11 @@ namespace
                 num = mNum;
                 den = mDen;
 
+                if (i > 0 && first->prop ("break").asString() == "page")
+                    out += "   <pb/>\n";
+                else if (i > 0 && first->prop ("break").asString() == "system")
+                    out += "   <sb/>\n";
+
                 out += "   <measure xml:id=\"" + xmlEscape (first->id) + "\" n=\"" + std::to_string (first->prop ("n").asInt()) + "\"";
 
                 if (first->prop ("pickup").asBool() || first->prop ("irregular").asBool())

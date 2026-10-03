@@ -949,6 +949,139 @@ static void testTempo()
 REGISTER (testTempo, "edit: tempo marks");
 
 //==============================================================================
+// Phase 7d: page layout.
+
+static std::vector<std::string> breaksOf (const Score& score)
+{
+    std::vector<std::string> out;
+
+    for (const auto& m : score.root().children[0].children[0].children)
+        out.push_back (m.prop ("break").asString());
+
+    return out;
+}
+
+static void testBreaks()
+{
+    Session s (pianoScore ({ { p ("C4"), 0, 1 }, { p ("D4"), 4, 1 }, { p ("E4"), 8, 1 }, { p ("F4"), 12, 1 }, { p ("G4"), 16, 1 } }, 20.0, 0));
+    CHECK_EQ (breaksOf (s.score).size(), 5u);
+
+    // a line break before the measure of the selected note; the same again takes it away
+    const auto third = events (s.score);
+    size_t eIndex = 0;
+
+    for (size_t i = 0; i < third.size(); ++i)
+        if (third[i]->type == nodeType::note && third[i]->prop ("pitch").asInt() == 64)
+            eIndex = i;
+
+    auto b = req ("break", idOf (s.score, eIndex));
+    b.set ("mode", "system");
+    CHECK (s.run (b).ok);
+    CHECK_STR (breaksOf (s.score)[2].c_str(), "system");
+    CHECK (scoreToMei (s.score, {}).find ("<sb/>") != std::string::npos);
+    CHECK (xmlcheck::checkXml (scoreToMei (s.score, {})).wellFormed);
+
+    // the break stands right before that measure in the MEI
+    const auto mei = scoreToMei (s.score, {});
+    const auto at = mei.find ("<sb/>");
+    CHECK (mei.substr (mei.find ("<measure", at), 80).find ("n=\"3\"") != std::string::npos);
+
+    CHECK (s.run (b).ok);
+    CHECK_STR (breaksOf (s.score)[2].c_str(), "");
+
+    // a page break replaces a line break
+    CHECK (s.run (b).ok);
+    b.set ("mode", "page");
+    CHECK (s.run (b).ok);
+    CHECK_STR (breaksOf (s.score)[2].c_str(), "page");
+    CHECK (scoreToMei (s.score, {}).find ("<pb/>") != std::string::npos);
+    CHECK (scoreToMei (s.score, {}).find ("<sb/>") == std::string::npos);
+    b.set ("mode", "none");
+    CHECK (s.run (b).ok);
+    CHECK (! s.run (b).ok);                       // nothing to take away
+    b.set ("mode", "wrongly");
+    CHECK (! s.run (b).ok);
+
+    // the first measure cannot have one
+    auto first = req ("break", idOf (s.score, 0));
+    first.set ("mode", "system");
+    CHECK (! s.run (first).ok);
+}
+REGISTER (testBreaks, "edit: line and page breaks");
+
+static void testBarsPerLine()
+{
+    Session s (pianoScore ({ { p ("C4"), 0, 1 }, { p ("D4"), 4, 1 }, { p ("E4"), 8, 1 }, { p ("F4"), 12, 1 }, { p ("G4"), 16, 1 }, { p ("A4"), 20, 1 } }, 24.0, 0));
+    CHECK_EQ (breaksOf (s.score).size(), 6u);
+
+    Json j = Json::object();
+    j.set ("op", "perLine");
+    j.set ("count", 2);
+    CHECK (s.run (j).ok);
+    const auto b = breaksOf (s.score);
+    CHECK_STR (b[0].c_str(), "");
+    CHECK_STR (b[1].c_str(), "");
+    CHECK_STR (b[2].c_str(), "system");
+    CHECK_STR (b[3].c_str(), "");
+    CHECK_STR (b[4].c_str(), "system");
+    CHECK (! s.run (j).ok);                       // already like that
+
+    // a page break stays; other counts replace the line breaks
+    // (page breaks are left alone by this operation: see the random test)
+    j.set ("count", 3);
+    CHECK (s.run (j).ok);
+    CHECK_STR (breaksOf (s.score)[2].c_str(), "");
+    CHECK_STR (breaksOf (s.score)[3].c_str(), "system");
+
+    // back to the program's choice; out of range
+    j.set ("count", 0);
+    CHECK (s.run (j).ok);
+    for (const auto& x : breaksOf (s.score))
+        CHECK_STR (x.c_str(), "");
+    j.set ("count", 40);
+    CHECK (! s.run (j).ok);
+    j.set ("count", -1);
+    CHECK (! s.run (j).ok);
+}
+REGISTER (testBarsPerLine, "edit: measures per line");
+
+static void testSpacing()
+{
+    Session s (pianoScore ({ { p ("C4"), 0, 1 } }, 4.0, 0));
+    auto layoutOf = [&] () -> const Node*
+    {
+        for (const auto& c : s.score.root().children)
+            if (c.type == nodeType::layout)
+                return &c;
+
+        return nullptr;
+    };
+
+    CHECK (layoutOf() == nullptr);
+
+    Json j = Json::object();
+    j.set ("op", "spacing");
+    j.set ("system", 22);
+    CHECK (s.run (j).ok);
+    CHECK (layoutOf() != nullptr);
+    CHECK_EQ ((int) layoutOf()->prop ("systemSpacing").asInt(), 22);
+    CHECK (! layoutOf()->has ("staffSpacing"));
+
+    j.set ("staff", 14);
+    CHECK (s.run (j).ok);
+    CHECK_EQ ((int) layoutOf()->prop ("staffSpacing").asInt(), 14);
+
+    CHECK (! s.run (j).ok);                       // the same again
+    j.set ("system", 99);
+    CHECK (! s.run (j).ok);
+    Json nothing = Json::object();
+    nothing.set ("op", "spacing");
+    CHECK (! s.run (nothing).ok);
+    CHECK (s.score.validate().empty());
+}
+REGISTER (testSpacing, "edit: line and staff spacing");
+
+//==============================================================================
 // Random edits on random takes: the score stays well formed, every step undoes and redoes exactly,
 // and measures that were not touched stay as they were.
 static void testRandomEdits()
@@ -1001,7 +1134,7 @@ static void testRandomEdits()
                 id = target->children[rng() % target->children.size()].id;
 
             Json j = Json::object();
-            const auto kind = rng() % 19;
+            const auto kind = rng() % 22;
 
             switch (kind)
             {
@@ -1023,7 +1156,10 @@ static void testRandomEdits()
                 case 15: j = req ("slur", id, "count", 1 + (int) (rng() % 3)); break;
                 case 16: j = req ("hairpin", id, "count", 1 + (int) (rng() % 3)); j.set ("form", std::string (rng() % 2 == 0 ? "cresc" : "dim")); break;
                 case 17: j = req ("tempo", id, "bpm", rng() % 4 == 0 ? 0 : 60 + (int) (rng() % 100)); j.set ("text", std::string (rng() % 2 == 0 ? "" : "rit.")); break;
-                default: j = req ("clear", id); break;
+                case 18: j = req ("clear", id); break;
+                case 19: j = req ("break", id); j.set ("mode", std::string (rng() % 3 == 0 ? "page" : rng() % 2 == 0 ? "system" : "none")); break;
+                case 20: j = Json::object(); j.set ("op", "perLine"); j.set ("count", (int) (rng() % 4)); break;
+                default: j = Json::object(); j.set ("op", "spacing"); j.set ("system", 6 + (int) (rng() % 30)); j.set ("staff", 6 + (int) (rng() % 20)); break;
             }
 
             const Score before = s.score;

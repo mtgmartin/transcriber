@@ -37,3 +37,11 @@ $q += , @(73, 8.0, 2.0, 100); $q += , @(73, 10.0, 2.0, 100)
 $q += , @(48, 0.0, 4.0, 85); $q += , @(48, 4.0, 4.0, 85); $q += , @(48, 8.0, 4.0, 85)
 Write-MidiFile (Join-Path $out "t42-edit-layout.mid") $q 12.0
 if (Test-Path $live) { Copy-Item (Join-Path $out "t42-edit-layout.mid") -Destination $live -Force }
+
+# t43-edit-pages (Phase 7d): 24 bars of 4/4, a C major scale in quarter notes up and down, left hand C3 and G2 half notes.
+$r = @()
+$scale = @(60, 62, 64, 65, 67, 69, 71, 72, 71, 69, 67, 65, 64, 62, 60, 62)
+for ($beat = 0; $beat -lt 96; $beat++) { $r += , @($scale[$beat % 16], [double]$beat, 1.0, 90) }
+for ($half = 0; $half -lt 48; $half++) { $r += , @($(if ($half % 2 -eq 0) { 48 } else { 43 }), ($half * 2.0), 2.0, 80) }
+Write-MidiFile (Join-Path $out "t43-edit-pages.mid") $r 96.0
+if (Test-Path $live) { Copy-Item (Join-Path $out "t43-edit-pages.mid") -Destination $live -Force }

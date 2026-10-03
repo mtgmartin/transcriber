@@ -9,6 +9,7 @@
   const bar = $("edit-bar");
   const bar2 = $("edit-bar2");
   const bar3 = $("edit-bar3");
+  const bar4 = $("edit-bar4");
   const message = $("edit-msg");
   let status = null;
   let timer = null;
@@ -30,7 +31,7 @@
     const hasScore = !!edit;
     const can = hasScore && !edit.blocked && selected() !== "" && status.state !== "recording";
 
-    [bar, bar2, bar3].forEach(function (row) {
+    [bar, bar2, bar3, bar4].forEach(function (row) {
       row.querySelectorAll("button[data-op]").forEach(function (b) {
         const op = b.dataset.op;
         b.disabled = op === "undo" ? !(hasScore && edit.canUndo)
@@ -42,6 +43,7 @@
     $("ed-interval").disabled = !can;
     $("ed-dyn").disabled = !can;
     $("ed-span").disabled = !can;
+    $("ed-perline").disabled = $("ed-spacing").disabled = !(hasScore && !edit.blocked && status.state !== "recording");
     $("ed-key").disabled = !(hasScore && !edit.blocked && status.state !== "recording");
 
     // the key of the score (it can change by a key change, its undo, or a new take)
@@ -57,7 +59,8 @@
   function run(request) {
     if (blocked()) { say(blocked(), true); return; }
 
-    if (request.op !== "undo" && request.op !== "redo") {
+    const wholeScore = { undo: 1, redo: 1, perLine: 1, spacing: 1, key: 1 };   // these need no selection
+    if (!wholeScore[request.op]) {
       const id = selected();
       if (!id) { say("Click a note or a rest first.", true); return; }
       request.id = id;
@@ -102,6 +105,23 @@
   bar.addEventListener("click", buttonClicked);
   bar2.addEventListener("click", buttonClicked);
   bar3.addEventListener("click", buttonClicked);
+  bar4.addEventListener("click", buttonClicked);
+
+  // the layout lists act at once, on the whole score
+  $("ed-perline").addEventListener("change", function () {
+    const v = $("ed-perline").value;
+    $("ed-perline").value = "";
+    if (v !== "") run({ op: "perLine", count: parseInt(v, 10) });
+    $("ed-perline").blur();
+  });
+
+  $("ed-spacing").addEventListener("change", function () {
+    const presets = { tight: [8, 8], normal: [14, 10], roomy: [22, 14] };
+    const v = $("ed-spacing").value;
+    $("ed-spacing").value = "";
+    if (presets[v]) run({ op: "spacing", system: presets[v][0], staff: presets[v][1] });
+    $("ed-spacing").blur();
+  });
 
   $("ed-dyn").addEventListener("change", function () {
     const v = $("ed-dyn").value;

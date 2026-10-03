@@ -1511,6 +1511,171 @@ namespace
         return success (bpm == 0 && text.empty() ? "Tempo mark taken away." : "Tempo mark set.");
     }
 
+    //==========================================================================
+    // Page layout (7d)
+
+    // The part of the score the selected event is in, and the index of its measure.
+    const Node* partAndMeasure (const Score& score, const std::string& id, size_t& measureIndex)
+    {
+        const auto* node = score.find (id);
+
+        if (node != nullptr && node->type == nodeType::note)
+        {
+            const auto* p = score.findParent (id);
+
+            if (p != nullptr && p->type == nodeType::chord)
+                node = p;
+        }
+
+        const auto* layer = node != nullptr && isEvent (*node) ? score.findParent (node->id) : nullptr;
+        const auto* measure = layer != nullptr ? score.findParent (layer->id) : nullptr;
+        const auto* staff = measure != nullptr ? score.findParent (measure->id, &measureIndex) : nullptr;
+        return staff != nullptr ? score.findParent (staff->id) : nullptr;
+    }
+
+    const Node* firstPart (const Score& score)
+    {
+        for (const auto& c : score.root().children)
+            if (c.type == nodeType::part && ! c.children.empty())
+                return &c;
+
+        return nullptr;
+    }
+
+    // A line or page break before the measure of the selected event (stored on the measure of the first staff). The
+    // same mode again, or "none", takes it away.
+    EditResult breakBefore (Score& score, UndoManager& undo, const std::string& id, const std::string& mode)
+    {
+        if (mode != "system" && mode != "page" && mode != "none")
+            return fail ("A break can be a new line, a new page or none.");
+
+        size_t index = 0;
+        const auto* part = partAndMeasure (score, id, index);
+
+        if (part == nullptr || part->children.empty() || index >= part->children.front().children.size())
+            return fail ("Select a note or a rest first.");
+
+        if (index == 0)
+            return fail ("The first measure always starts the first line.");
+
+        const auto& measure = part->children.front().children[index];
+        const auto current = measure.prop ("break").asString();
+        const auto wanted = mode == current ? std::string ("none") : mode;
+
+        if (wanted == "none" && current.empty())
+            return fail ("There is no break before this measure.");
+
+        const bool ok = undo.perform (std::make_unique<SetPropertyCommand> (measure.id, "break", wanted == "none" ? std::nullopt : std::optional<Json> (Json (wanted)), "Break"));
+
+        if (! ok)
+            return fail ("The change did not fit the score.");
+
+        return success (wanted == "none" ? "The break is taken away."
+                                         : wanted == "page" ? "A new page starts at this measure." : "A new line starts at this measure.");
+    }
+
+    // A line break before every count-th measure (the first line holds count measures); 0 gives the choice back to the program.
+    // Page breaks stay as they are.
+    EditResult barsPerLine (Score& score, UndoManager& undo, int count)
+    {
+        if (count < 0 || count > 32)
+            return fail ("A line can hold 1 to 32 measures.");
+
+        const auto* part = firstPart (score);
+
+        if (part == nullptr)
+            return fail ("There is no score to edit.");
+
+        const auto& measures = part->children.front().children;
+        undo.beginGroup ("Measures per line");
+        bool ok = true, any = false;
+
+        for (size_t i = 1; i < measures.size() && ok; ++i)
+        {
+            const auto current = measures[i].prop ("break").asString();
+
+            if (current == "page")
+                continue;
+
+            const bool wanted = count > 0 && i % (size_t) count == 0;
+
+            if (wanted == (current == "system"))
+                continue;
+
+            any = true;
+            ok = undo.perform (std::make_unique<SetPropertyCommand> (measures[i].id, "break",
+                                                                      wanted ? std::optional<Json> (Json ("system")) : std::nullopt, "Measures per line"));
+        }
+
+        undo.endGroup();
+
+        if (! ok)
+        {
+            undo.undo();
+            return fail ("The change did not fit the score.");
+        }
+
+        if (! any)
+            return fail ("The lines are broken like that already.");
+
+        return success (count == 0 ? "The program breaks the lines." : "A line holds " + std::to_string (count) + (count == 1 ? " measure." : " measures."));
+    }
+
+    // The distance between the lines of music (system) and between the staves of one line (staff), in Verovio units.
+    EditResult setSpacing (Score& score, UndoManager& undo, const Json& system, const Json& staff)
+    {
+        auto valid = [] (const Json& v) { return ! v.isNumber() || (v.asInt() >= 4 && v.asInt() <= 40); };
+
+        if (! valid (system) || ! valid (staff))
+            return fail ("The spacing can be 4 to 40.");
+
+        if (! system.isNumber() && ! staff.isNumber())
+            return fail ("Nothing to set.");
+
+        const Node* layout = nullptr;
+
+        for (const auto& c : score.root().children)
+            if (c.type == nodeType::layout)
+                layout = &c;
+
+        undo.beginGroup ("Spacing");
+        bool ok = true, any = false;
+
+        if (layout == nullptr)
+        {
+            auto node = score.makeNode (nodeType::layout);
+
+            if (system.isNumber()) node.props["systemSpacing"] = Json (system.asInt());
+            if (staff.isNumber())  node.props["staffSpacing"] = Json (staff.asInt());
+            ok = undo.perform (std::make_unique<InsertNodeCommand> (score.root().id, score.root().children.size(), std::move (node), "Spacing"));
+            any = true;
+        }
+        else
+        {
+            if (system.isNumber() && layout->prop ("systemSpacing").asInt() != system.asInt())
+            {
+                ok = undo.perform (std::make_unique<SetPropertyCommand> (layout->id, "systemSpacing", Json (system.asInt()), "Spacing"));
+                any = true;
+            }
+
+            if (ok && staff.isNumber() && layout->prop ("staffSpacing").asInt() != staff.asInt())
+            {
+                ok = undo.perform (std::make_unique<SetPropertyCommand> (layout->id, "staffSpacing", Json (staff.asInt()), "Spacing"));
+                any = true;
+            }
+        }
+
+        undo.endGroup();
+
+        if (! ok)
+        {
+            undo.undo();
+            return fail ("The change did not fit the score.");
+        }
+
+        return any ? success ("Spacing changed.") : fail ("The spacing is that already.");
+    }
+
     EditResult finish (Edit& e, UndoManager& undo, const std::string& name, EditResult result)
     {
         if (! result.ok)
@@ -1660,6 +1825,15 @@ EditResult performEdit (Score& score, UndoManager& undo, const Json& request)
 
     if (op == "key")
         return changeKey (score, undo, (int) request.get ("fifths").asInt(), request.get ("minor").asBool());
+
+    if (op == "break")
+        return breakBefore (score, undo, request.get ("id").asString(), request.get ("mode").asString());
+
+    if (op == "perLine")
+        return barsPerLine (score, undo, (int) request.get ("count").asInt());
+
+    if (op == "spacing")
+        return setSpacing (score, undo, request.get ("system"), request.get ("staff"));
 
     if (op == "tempo")
         return tempoMark (score, undo, request.get ("id").asString(), (int) request.get ("bpm").asInt(), request.get ("text").asString());

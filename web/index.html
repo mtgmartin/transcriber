@@ -104,6 +104,22 @@
       <button type="button" data-op="tempo-dialog" title="A tempo mark at the selected note" disabled>Tempo&hellip;</button>
       <button type="button" data-op="clear" title="Take away the dynamic, articulation, fermata and text of the selected note" disabled>Clear marks</button>
     </div>
+    <div class="row" id="edit-bar4">
+      <span class="dim">Layout</span>
+      <button type="button" data-op="break" data-mode="system" title="Start a new line at the selected note's measure; again takes it away" disabled>New line here</button>
+      <button type="button" data-op="break" data-mode="page" title="Start a new page at the selected note's measure" disabled>New page here</button>
+      <button type="button" data-op="break" data-mode="none" title="Take the break before this measure away" disabled>No break</button>
+      <span class="sep"></span>
+      <label for="ed-perline" class="dim">Measures per line</label>
+      <select id="ed-perline" title="A line break before every n-th measure" disabled>
+        <option value="">choose</option><option value="0">the program decides</option><option value="1">1</option><option value="2">2</option><option value="3">3</option>
+        <option value="4">4</option><option value="5">5</option><option value="6">6</option><option value="8">8</option>
+      </select>
+      <label for="ed-spacing" class="dim">Spacing</label>
+      <select id="ed-spacing" title="The distance between the lines and between the staves" disabled>
+        <option value="">choose</option><option value="tight">tight</option><option value="normal">normal</option><option value="roomy">roomy</option>
+      </select>
+    </div>
     <p id="edit-msg" class="result"></p>
     <p id="edited-note" class="dim" hidden>You have edited this score, so the reading and the notation settings are locked.
        <button id="discard-edits" type="button">Discard my edits</button></p>
