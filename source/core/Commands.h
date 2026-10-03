@@ -88,6 +88,29 @@ private:
     size_t newIndex, oldIndex = 0;
 };
 
+// Replaces all the children of several nodes at once (a whole measure rewritten by an edit). Undoing puts
+// the old children back exactly.
+class ReplaceChildrenCommand final : public Command
+{
+public:
+    struct Change
+    {
+        std::string parentId;
+        std::vector<Node> children;   // the new children
+    };
+
+    ReplaceChildrenCommand (std::vector<Change> changes, std::string commandName);
+
+    std::string name() const override { return label; }
+    bool apply (Score&) override;
+    void revert (Score&) override;
+
+private:
+    std::string label;
+    std::vector<Change> changed;    // the new children; apply swaps them with the old ones
+    bool applied = false;
+};
+
 // Several commands that undo and redo as one step.
 class CompositeCommand final : public Command
 {
@@ -114,7 +137,10 @@ private:
 class UndoManager
 {
 public:
-    explicit UndoManager (Score& scoreToEdit, size_t maxSteps = 500) : score (scoreToEdit), limit (maxSteps) {}
+    explicit UndoManager (Score& scoreToEdit, size_t maxSteps = 500) : score (&scoreToEdit), limit (maxSteps) {}
+
+    // The score may move in memory (a list of versions grows); the history follows it.
+    void rebind (Score& scoreToEdit) noexcept { score = &scoreToEdit; }
 
     // Applies the command and remembers it. false if it did not apply (nothing is remembered).
     bool perform (std::unique_ptr<Command>);
@@ -134,7 +160,7 @@ public:
     void clear();
 
 private:
-    Score& score;
+    Score* score;
     size_t limit;
     std::vector<std::unique_ptr<Command>> undoStack, redoStack;
     std::unique_ptr<CompositeCommand> group;   // already applied

@@ -242,9 +242,72 @@ void CompositeCommand::revert (Score& score)
 }
 
 //==============================================================================
+ReplaceChildrenCommand::ReplaceChildrenCommand (std::vector<Change> changes, std::string commandName)
+    : label (std::move (commandName)), changed (std::move (changes))
+{
+}
+
+bool ReplaceChildrenCommand::apply (Score& score)
+{
+    // every parent must exist, and the new children must fit under it with ids that are free
+    // (an id of the old children may be used again)
+    for (const auto& c : changed)
+    {
+        const auto* p = score.find (c.parentId);
+
+        if (p == nullptr)
+            return false;
+
+        std::vector<std::string> seen;
+
+        for (const auto& child : c.children)
+        {
+            if (! isValidChild (p->type, child.type) || ! nestingIsValid (child))
+                return false;
+
+            if (child.id.empty())
+                return false;
+
+            for (const auto& s : seen)
+                if (s == child.id)
+                    return false;
+
+            seen.push_back (child.id);
+        }
+    }
+
+    for (auto& c : changed)
+    {
+        auto* p = ScoreAccess::find (score, c.parentId);
+        std::swap (p->children, c.children);
+    }
+
+    applied = true;
+    ScoreAccess::touch (score);
+    return true;
+}
+
+void ReplaceChildrenCommand::revert (Score& score)
+{
+    if (! applied)
+        return;
+
+    for (auto i = changed.size(); i > 0; --i)
+    {
+        auto& c = changed[i - 1];
+
+        if (auto* p = ScoreAccess::find (score, c.parentId))
+            std::swap (p->children, c.children);
+    }
+
+    applied = false;
+    ScoreAccess::touch (score);
+}
+
+//==============================================================================
 bool UndoManager::perform (std::unique_ptr<Command> command)
 {
-    if (command == nullptr || ! command->apply (score))
+    if (command == nullptr || ! command->apply (*score))
         return false;
 
     redoStack.clear();
@@ -304,7 +367,7 @@ bool UndoManager::undo()
 
     auto command = std::move (undoStack.back());
     undoStack.pop_back();
-    command->revert (score);
+    command->revert (*score);
     redoStack.push_back (std::move (command));
     return true;
 }
@@ -319,7 +382,7 @@ bool UndoManager::redo()
     auto command = std::move (redoStack.back());
     redoStack.pop_back();
 
-    if (! command->apply (score))
+    if (! command->apply (*score))
         return false;   // cannot happen when the history is intact; the step is dropped
 
     undoStack.push_back (std::move (command));

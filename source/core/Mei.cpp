@@ -622,6 +622,9 @@ std::string describeNode (const Score& score, const std::string& id)
     if (event == nullptr)
         return text;
 
+    // one note of a chord that was picked on its own
+    const bool pickedNote = node != event && node->type == nodeType::note && event->type == nodeType::chord;
+
     auto value = valueName ((int) event->prop ("dur").asInt());
     const auto dots = (int) event->prop ("dots").asInt();
 
@@ -655,6 +658,9 @@ std::string describeNode (const Score& score, const std::string& id)
         if (event->prop ("offGrid").asBool())
             add ("was far from the grid");
     }
+
+    if (pickedNote)
+        add ("this note: " + pitchText (*node));
 
     return text;
 }

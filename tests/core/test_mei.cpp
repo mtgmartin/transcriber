@@ -176,6 +176,8 @@ namespace
             // a click on a note inside the chord says the chord
             const auto inner = describeNode (result.score, chord->children.front().id);
             CHECK (inner.find ("chord") != std::string::npos);
+            CHECK (inner.find ("this note: C4") != std::string::npos);
+            CHECK (text.find ("this note") == std::string::npos);
         }
 
         if (rest != nullptr)

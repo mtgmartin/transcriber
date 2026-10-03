@@ -41,6 +41,60 @@ namespace detail
         return 0;
     }
 
+    // Sets the accidental to show on every note of one measure of a staff (all its layers): where the
+    // spelling differs from what the key signature and the earlier notes of the measure say, and not
+    // on a note that continues a tie. The editor calls this again after every change.
+    inline void refreshAccidentals (Node& staffMeasure, int fifths)
+    {
+        std::vector<Node*> noteNodes;
+        std::vector<Node*> stack;
+
+        for (auto& layer : staffMeasure.children)
+            if (layer.type == nodeType::layer)
+                stack.push_back (&layer);
+
+        while (! stack.empty())
+        {
+            auto* n = stack.back();
+            stack.pop_back();
+
+            if (n->type == nodeType::note)
+                noteNodes.push_back (n);
+
+            for (auto& c : n->children)
+                stack.push_back (&c);
+        }
+
+        for (auto* n : noteNodes)
+            n->props.erase ("accid");
+
+        std::stable_sort (noteNodes.begin(), noteNodes.end(), [] (const Node* a, const Node* b)
+        {
+            return a->prop ("onset").asInt() < b->prop ("onset").asInt();
+        });
+
+        std::map<std::pair<char, int>, int> state;
+
+        for (auto* n : noteNodes)
+        {
+            const char step = n->prop ("step").asString()[0];
+            const int octave = (int) n->prop ("oct").asInt();
+            const int alter = (int) n->prop ("alter").asInt();
+            const auto key = std::make_pair (step, octave);
+            const auto it = state.find (key);
+            const auto current = it != state.end() ? it->second : keySignatureAlter (step, fifths);
+            const auto tied = n->prop ("tie").asString() == "t" || n->prop ("tie").asString() == "m";
+
+            if (alter != current && ! tied)
+            {
+                const char* shown = alter == 0 ? "n" : alter == 1 ? "s" : alter == -1 ? "f" : alter >= 2 ? "ss" : "ff";
+                n->props["accid"] = Json (shown);
+            }
+
+            state[key] = alter;
+        }
+    }
+
     struct Segment
     {
         int64_t on = 0;         // from the (virtual) bar start
@@ -130,54 +184,7 @@ namespace detail
 
         // Shows an accidental where the spelling differs from what the key signature and the earlier
         // notes of the measure already say.
-        void addAccidentals (Node& staffMeasure)
-        {
-            std::vector<Node*> noteNodes;
-
-            std::vector<Node*> stack;
-
-            for (auto& layer : staffMeasure.children)
-                if (layer.type == nodeType::layer)
-                    stack.push_back (&layer);
-
-            while (! stack.empty())
-            {
-                auto* n = stack.back();
-                stack.pop_back();
-
-                if (n->type == nodeType::note)
-                    noteNodes.push_back (n);
-
-                for (auto& c : n->children)
-                    stack.push_back (&c);
-            }
-
-            std::stable_sort (noteNodes.begin(), noteNodes.end(), [] (const Node* a, const Node* b)
-            {
-                return a->prop ("onset").asInt() < b->prop ("onset").asInt();
-            });
-
-            std::map<std::pair<char, int>, int> state;
-
-            for (auto* n : noteNodes)
-            {
-                const char step = n->prop ("step").asString()[0];
-                const int octave = (int) n->prop ("oct").asInt();
-                const int alter = (int) n->prop ("alter").asInt();
-                const auto key = std::make_pair (step, octave);
-                const auto it = state.find (key);
-                const auto current = it != state.end() ? it->second : keySignatureAlter (step, fifths);
-                const auto tied = n->prop ("tie").asString() == "t" || n->prop ("tie").asString() == "m";
-
-                if (alter != current && ! tied)
-                {
-                    const char* shown = alter == 0 ? "n" : alter == 1 ? "s" : alter == -1 ? "f" : alter >= 2 ? "ss" : "ff";
-                    n->props["accid"] = Json (shown);
-                }
-
-                state[key] = alter;
-            }
-        }
+        void addAccidentals (Node& staffMeasure) { refreshAccidentals (staffMeasure, fifths); }
 
         // Makes the node of one note of a voice event. The default writes a pitched note; drums and
         // tablature set their own.

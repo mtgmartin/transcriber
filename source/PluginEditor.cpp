@@ -137,6 +137,11 @@ juce::WebBrowserComponent::Options TranscriberEditor::makeBrowserOptions()
             o->setProperty ("text", processor.getCapture().describeScoreNode (id));
             browser.emitEventIfBrowserIsVisible ("nodeInfo", juce::var (o));
         })
+        .withEventListener ("editScore", [this] (juce::var data)
+        {
+            browser.emitEventIfBrowserIsVisible ("editResult", processor.getCapture().editScore (data));
+        })
+        .withEventListener ("discardEdits", [this] (juce::var) { processor.getCapture().discardEdits(); })
         .withEventListener ("savePdf", [this] (juce::var data) { savePdf (data); })
         .withEventListener ("verSelect", [this] (juce::var data)    { processor.getCapture().selectVersion (data.getProperty ("id", {}).toString()); })
         .withEventListener ("verRename", [this] (juce::var data)    { processor.getCapture().renameVersion (data.getProperty ("id", {}).toString(), data.getProperty ("name", {}).toString()); })

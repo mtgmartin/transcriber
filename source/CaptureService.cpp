@@ -128,7 +128,7 @@ void CaptureService::setMode (trs::ReadingMode mode)
 {
     const std::lock_guard<std::mutex> lock (mutex);
 
-    if (auto* v = document.activeMutable())
+    if (auto* v = document.activeMutable(); v != nullptr && ! v->scoreEdited)
         v->setReading (trs::readingWithMode (v->capture, v->reading, mode));
 }
 
@@ -136,7 +136,7 @@ void CaptureService::setLoopBars (int numBars)
 {
     const std::lock_guard<std::mutex> lock (mutex);
 
-    if (auto* v = document.activeMutable())
+    if (auto* v = document.activeMutable(); v != nullptr && ! v->scoreEdited)
         v->setReading (trs::readingWithLoopBars (v->capture, v->reading, numBars));
 }
 
@@ -144,7 +144,7 @@ void CaptureService::redetect()
 {
     const std::lock_guard<std::mutex> lock (mutex);
 
-    if (auto* v = document.activeMutable())
+    if (auto* v = document.activeMutable(); v != nullptr && ! v->scoreEdited)
     {
         v->detection = trs::detectReading (v->capture);
         v->setReading (v->detection.reading);
@@ -156,7 +156,7 @@ void CaptureService::setTranscriptionSetting (const juce::String& name, const ju
     const std::lock_guard<std::mutex> lock (mutex);
     auto* v = document.activeMutable();
 
-    if (v == nullptr)
+    if (v == nullptr || v->scoreEdited)   // an edited score is not written again
         return;
 
     auto s = v->transcriptionSettings();
@@ -217,7 +217,7 @@ void CaptureService::setInstrument (const juce::String& type)
     document.defaultProfile = profile.toJson();
     document.markChanged();
 
-    if (auto* v = document.activeMutable())
+    if (auto* v = document.activeMutable(); v != nullptr && ! v->scoreEdited)
         v->setProfile (profile);
 }
 
@@ -232,7 +232,7 @@ void CaptureService::applyDrumMapToProfiles (const trs::DrumMap& map)
         document.defaultProfile = p.toJson();
     }
 
-    if (auto* v = document.activeMutable())
+    if (auto* v = document.activeMutable(); v != nullptr && ! v->scoreEdited)
     {
         auto p = v->instrument();
 
@@ -403,6 +403,7 @@ void CaptureService::deleteVersion (const juce::String& id)
 {
     const std::lock_guard<std::mutex> lock (mutex);
     lastStopWasEmpty = false;
+    histories.erase (id.toStdString());
     document.remove (id.toStdString());
 }
 
@@ -519,6 +520,18 @@ juce::var CaptureService::getStatus() const
         t->setProperty ("tripletBeats", v->report.tripletBeats);
         t->setProperty ("edited", v->scoreEdited);
 
+        {
+            auto* ed = new juce::DynamicObject();
+            const auto it = histories.find (v->id);
+            const auto* undo = it != histories.end() ? it->second.get() : nullptr;
+            ed->setProperty ("canUndo", undo != nullptr && undo->canUndo());
+            ed->setProperty ("canRedo", undo != nullptr && undo->canRedo());
+            ed->setProperty ("undoName", undo != nullptr ? juce::String::fromUTF8 (undo->undoName().c_str()) : juce::String());
+            ed->setProperty ("redoName", undo != nullptr ? juce::String::fromUTF8 (undo->redoName().c_str()) : juce::String());
+            ed->setProperty ("blocked", juce::String::fromUTF8 (trs::editBlocker (v->score).c_str()));
+            o->setProperty ("edit", juce::var (ed));
+        }
+
         juce::Array<juce::var> warnings;
 
         for (const auto& w : v->report.warnings)
@@ -608,6 +621,55 @@ juce::var CaptureService::getMei() const
     o->setProperty ("key", juce::String (key));
     o->setProperty ("mei", juce::String::fromUTF8 (meiCache.c_str()));
     return juce::var (o);
+}
+
+trs::UndoManager& CaptureService::historyOf (trs::Version& v)
+{
+    auto& slot = histories[v.id];
+
+    if (slot == nullptr)
+        slot = std::make_unique<trs::UndoManager> (v.score);
+    else
+        slot->rebind (v.score);   // the list of versions may have moved the score
+
+    return *slot;
+}
+
+juce::var CaptureService::editScore (const juce::var& request)
+{
+    const std::lock_guard<std::mutex> lock (mutex);
+    auto* o = new juce::DynamicObject();
+    auto* v = document.activeMutable();
+    trs::Json json;
+
+    if (v == nullptr || v->score.root().children.empty()
+        || ! trs::Json::parse (juce::JSON::toString (request, true).toStdString(), json))
+    {
+        o->setProperty ("ok", false);
+        o->setProperty ("message", "There is no score to edit.");
+        return juce::var (o);
+    }
+
+    const auto result = trs::performEdit (v->score, historyOf (*v), json);
+
+    if (result.ok && json.get ("op").asString() != "undo" && json.get ("op").asString() != "redo")
+        v->scoreEdited = true;
+
+    o->setProperty ("ok", result.ok);
+    o->setProperty ("message", juce::String::fromUTF8 (result.message.c_str()));
+    o->setProperty ("select", juce::String::fromUTF8 (result.select.c_str()));
+    return juce::var (o);
+}
+
+void CaptureService::discardEdits()
+{
+    const std::lock_guard<std::mutex> lock (mutex);
+
+    if (auto* v = document.activeMutable(); v != nullptr && v->scoreEdited)
+    {
+        histories.erase (v->id);
+        v->discardEdits();
+    }
 }
 
 juce::String CaptureService::describeScoreNode (const juce::String& id) const
@@ -702,6 +764,7 @@ void CaptureService::loadState (const void* data, size_t size)
 
     const std::lock_guard<std::mutex> lock (mutex);
     document = trs::Document();
+    histories.clear();
     unreadableState.reset();
     loadMessage = {};
 

@@ -64,6 +64,9 @@ public:
     // Makes the score from the recording for the profile. Does nothing for an edited score.
     void regenerate();
 
+    // Throws the user's edits away: the score is made from the recording again.
+    void discardEdits();
+
     // Increases when the reading or the score changes.
     uint64_t revision() const noexcept { return readingRevision + score.revision(); }
 

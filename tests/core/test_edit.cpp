@@ -1,0 +1,815 @@
+// Phase 7a tests: the editing operations. Every operation is applied, checked and undone; random
+// sequences of edits keep the score well formed and undo back to the start.
+
+#include "TestSupport.h"
+#include "TranscribeSupport.h"
+
+#include "core/Edit.h"
+#include "core/Notation.h"
+
+#include <random>
+#include <set>
+
+using namespace trs;
+using namespace tsupport;
+
+#define REGISTER(fn, name) static testing::Registrar registrar_##fn (name, fn)
+
+namespace
+{
+    // The events (notes, chords, rests) of the first staff, in order.
+    std::vector<const Node*> events (const Score& score, int staffNumber = 1)
+    {
+        std::vector<const Node*> out;
+
+        for (const auto& part : score.root().children)
+            for (const auto& staff : part.children)
+                if (staff.prop ("n").asInt() == staffNumber)
+                    for (const auto& m : staff.children)
+                        for (const auto& layer : m.children)
+                            if (layer.type == nodeType::layer)
+                                for (const auto& e : layer.children)
+                                    out.push_back (&e);
+
+        return out;
+    }
+
+    std::string idOf (const Score& score, size_t index, int staffNumber = 1)
+    {
+        const auto all = events (score, staffNumber);
+        return index < all.size() ? all[index]->id : std::string();
+    }
+
+    // "S1 v1: ..." lines of the right hand only, e.g. "m1 C4/4 E4/4 R".
+    std::string right (const Score& score)
+    {
+        const auto text = dumpScore (score);
+        std::string out;
+        size_t at = 0;
+
+        while (at < text.size())
+        {
+            auto end = text.find ('\n', at);
+
+            if (end == std::string::npos)
+                end = text.size();
+
+            auto line = text.substr (at, end - at);
+            at = end + 1;
+
+            if (line.rfind ("m", 0) == 0)
+                out += (out.empty() ? "" : " | ") + line.substr (0, line.find (' '));
+            else if (line.find ("S1 ") != std::string::npos)
+                out += " " + line.substr (line.find (':') + 2);
+        }
+
+        return out;
+    }
+
+    Json req (const char* op, const std::string& id)
+    {
+        Json j = Json::object();
+        j.set ("op", op);
+        j.set ("id", id);
+        return j;
+    }
+
+    Json req (const char* op, const std::string& id, const char* key, int value)
+    {
+        auto j = req (op, id);
+        j.set (key, value);
+        return j;
+    }
+
+    ResolvedCapture takeOf (const std::vector<N>& notes, double length, int beatsPerBar = 4)
+    {
+        ResolvedCapture rc;
+
+        for (const auto& n : notes)
+        {
+            ResolvedNote r;
+            r.onPpq = n.start;
+            r.offPpq = n.start + n.dur;
+            r.pitch = n.pitch;
+            r.velocity = n.vel;
+            rc.notes.push_back (r);
+        }
+
+        rc.lengthPpq = length;
+
+        for (double b = 0.0; b < length - 1.0e-9; b += beatsPerBar)
+            rc.bars.push_back ({ b, beatsPerBar, 4 });
+
+        rc.tempoMap.push_back ({ 0.0, 120.0 });
+        return rc;
+    }
+
+    // Every voice of every measure fills the measure exactly, in order, with sensible values.
+    std::string problems (const Score& score)
+    {
+        if (const auto v = score.validate(); ! v.empty())
+            return v;
+
+        for (const auto& part : score.root().children)
+            for (const auto& staff : part.children)
+                for (const auto& m : staff.children)
+                    for (const auto& layer : m.children)
+                    {
+                        if (layer.type != nodeType::layer)
+                            continue;
+
+                        int64_t at = 0;
+                        std::map<std::string, int> beamed;
+
+                        for (const auto& e : layer.children)
+                        {
+                            if (e.prop ("onset").asInt() != at)
+                                return "gap or overlap in measure " + std::to_string (m.prop ("n").asInt()) + " at " + std::to_string (at);
+
+                            at += e.prop ("ticks").asInt();
+
+                            if (! e.prop ("beam").asString().empty())
+                                ++beamed[e.prop ("beam").asString()];
+
+                            if (e.type == nodeType::chord)
+                            {
+                                std::set<int64_t> pitches;
+
+                                for (const auto& n : e.children)
+                                {
+                                    if (! pitches.insert (n.prop ("pitch").asInt()).second)
+                                        return "a pitch twice in a chord";
+
+                                    if (n.prop ("onset").asInt() != e.prop ("onset").asInt())
+                                        return "a chord note with another onset";
+                                }
+
+                                if (e.children.size() < 2)
+                                    return "a chord of one note";
+                            }
+
+                            if (e.type == nodeType::note)
+                            {
+                                const char* names = "CDEFGAB";
+                                const auto step = e.prop ("step").asString();
+
+                                if (step.size() != 1 || std::string (names).find (step[0]) == std::string::npos)
+                                    return "a note without a letter";
+
+                                if (pitchOf (step[0], (int) e.prop ("alter").asInt(), (int) e.prop ("oct").asInt()) != e.prop ("pitch").asInt())
+                                    return "pitch and spelling disagree";
+                            }
+                        }
+
+                        if (at != m.prop ("ticks").asInt())
+                            return "measure " + std::to_string (m.prop ("n").asInt()) + " is " + std::to_string (at) + " long, not " + std::to_string (m.prop ("ticks").asInt());
+
+                        for (const auto& [id, count] : beamed)
+                            if (count < 2)
+                                return "a beam of one note";
+                    }
+
+        return {};
+    }
+
+    // Applies an edit and checks that undo and redo give back the score exactly.
+    struct Session
+    {
+        Score score;
+        UndoManager undo { score };
+
+        explicit Session (Score s) : score (std::move (s)) { undo.rebind (score); }
+
+        EditResult run (const Json& request)
+        {
+            const Score before = score;
+            auto result = performEdit (score, undo, request);
+
+            if (! result.ok)
+            {
+                CHECK (score == before);   // a refused edit changes nothing
+                return result;
+            }
+
+            CHECK (score.validate().empty());
+            const Score after = score;
+            CHECK (undo.undo());
+            CHECK (score == before);
+            CHECK (undo.redo());
+            CHECK (score == after);
+            return result;
+        }
+    };
+
+    Score pianoScore (std::vector<N> notes, double length, int tonic = -1, bool minor = false, int beatsPerBar = 4)
+    {
+        TranscriptionSettings settings;
+        settings.keyTonic = tonic;
+        settings.keyMinor = minor;
+        return transcribePiano (takeOf (notes, length, beatsPerBar), settings).score;
+    }
+}
+
+//==============================================================================
+static void testPitch()
+{
+    Session s (pianoScore ({ { p ("C4"), 0, 1 }, { p ("E4"), 1, 1 }, { p ("G4"), 2, 1 }, { p ("C5"), 3, 1 } }, 4.0, 0));
+    CHECK_STR (right (s.score).c_str(), "m1 C4/4 E4/4 G4/4 C5/4");
+
+    auto r = s.run (req ("pitch", idOf (s.score, 1), "semitones", 1));
+    CHECK (r.ok);
+    CHECK_STR (right (s.score).c_str(), "m1 C4/4 F4/4 G4/4 C5/4");
+    CHECK (s.undo.undo());
+
+    // a chromatic note in C major is written with a sharp
+    r = s.run (req ("pitch", idOf (s.score, 0), "semitones", 1));
+    CHECK (r.ok);
+    CHECK_STR (right (s.score).c_str(), "m1 C#4!/4 E4/4 G4/4 C5/4");
+    CHECK_STR (events (s.score)[0]->prop ("accid").asString().c_str(), "s");
+    CHECK (s.undo.undo());
+
+    // down: the sharp is kept for a sharp key, a flat for a flat key
+    r = s.run (req ("pitch", idOf (s.score, 2), "semitones", -1));
+    CHECK_STR (right (s.score).c_str(), "m1 C4/4 E4/4 F#4!/4 C5/4");
+    CHECK (s.undo.undo());
+
+    // an octave keeps the spelling
+    r = s.run (req ("pitch", idOf (s.score, 3), "semitones", -12));
+    CHECK_STR (right (s.score).c_str(), "m1 C4/4 E4/4 G4/4 C4/4");
+    CHECK (s.undo.undo());
+
+    // the range of the piano
+    Session top (pianoScore ({ { p ("C8"), 0, 1 } }, 4.0, 0));
+    CHECK (! top.run (req ("pitch", idOf (top.score, 0), "semitones", 1)).ok);
+    CHECK (! top.run (req ("pitch", idOf (top.score, 0), "semitones", 12)).ok);
+    CHECK (top.run (req ("pitch", idOf (top.score, 0), "semitones", -1)).ok);
+
+    // flat key: a note of the scale is spelled as the key signature says
+    Session f (pianoScore ({ { p ("F4"), 0, 1 }, { p ("A4"), 1, 1 }, { p ("C5"), 2, 1 }, { p ("F5"), 3, 1 } }, 4.0, 5));
+    CHECK_STR (right (f.score).c_str(), "m1 F4/4 A4/4 C5/4 F5/4");
+    f.run (req ("pitch", idOf (f.score, 1), "semitones", 1));
+    CHECK_STR (right (f.score).c_str(), "m1 F4/4 Bb4/4 C5/4 F5/4");
+    CHECK (events (f.score)[1]->prop ("accid").asString().empty());   // the key signature has it
+
+    // the same in C major: A sharp
+    Session c (pianoScore ({ { p ("A4"), 0, 1 } }, 4.0, 0));
+    c.run (req ("pitch", idOf (c.score, 0), "semitones", 1));
+    CHECK_STR (right (c.score).c_str(), "m1 A#4!/4 r/4 r/2");
+
+    // a rest has no pitch
+    Session rest (pianoScore ({ { p ("C4"), 0, 1 } }, 4.0, 0));
+    CHECK (! rest.run (req ("pitch", idOf (rest.score, 1), "semitones", 1)).ok);
+}
+REGISTER (testPitch, "edit: pitch up, down, octave, range, spelling by key");
+
+static void testAccidentals()
+{
+    // an accidental holds for the rest of the measure and is shown again where it changes
+    Session s (pianoScore ({ { p ("C4"), 0, 1 }, { p ("C4"), 1, 1 }, { p ("C4"), 2, 1 }, { p ("C4"), 3, 1 } }, 4.0, 0));
+    s.run (req ("pitch", idOf (s.score, 1), "semitones", 1));
+    const auto e = events (s.score);
+    CHECK (e[0]->prop ("accid").asString().empty());
+    CHECK_STR (e[1]->prop ("accid").asString().c_str(), "s");
+    CHECK_STR (e[2]->prop ("accid").asString().c_str(), "n");   // back to natural
+    CHECK (e[3]->prop ("accid").asString().empty());
+
+    // and undone, they are gone again
+    CHECK (s.undo.undo());
+    for (const auto* n : events (s.score))
+        CHECK (n->prop ("accid").asString().empty());
+}
+REGISTER (testAccidentals, "edit: accidentals are worked out again");
+
+static void testDelete()
+{
+    Session s (pianoScore ({ { p ("C4"), 0, 1 }, { p ("E4"), 1, 1 }, { p ("G4"), 2, 0.5 }, { p ("A4"), 2.5, 0.5 }, { p ("C5"), 3, 1 } }, 4.0, 0));
+    CHECK_STR (right (s.score).c_str(), "m1 C4/4 E4/4 ( G4/8 A4/8 ) C5/4");
+
+    auto r = s.run (req ("delete", idOf (s.score, 1)));
+    CHECK (r.ok);
+    CHECK_STR (right (s.score).c_str(), "m1 C4/4 r/4 ( G4/8 A4/8 ) C5/4");
+    CHECK_STR (r.select.c_str(), idOf (s.score, 1).c_str());
+
+    // the notes next to a rest join it: all of them gone gives a measure rest
+    CHECK (s.run (req ("delete", idOf (s.score, 0))).ok);
+    CHECK_STR (right (s.score).c_str(), "m1 r/2 ( G4/8 A4/8 ) C5/4");
+
+    for (int guard = 0; guard < 10; ++guard)
+    {
+        const auto all = events (s.score);
+        const auto note = std::find_if (all.begin(), all.end(), [] (const Node* n) { return n->type != nodeType::rest; });
+
+        if (note == all.end())
+            break;
+
+        CHECK (s.run (req ("delete", (*note)->id)).ok);
+    }
+
+    CHECK_STR (right (s.score).c_str(), "m1 R");
+    CHECK_EQ (events (s.score).size(), 1u);   // one measure rest
+    CHECK (events (s.score).front()->prop ("measureRest").asBool());
+
+    // a rest cannot be deleted
+    CHECK (! s.run (req ("delete", idOf (s.score, 0))).ok);
+    CHECK (! s.run (req ("delete", "nonsense")).ok);
+}
+REGISTER (testDelete, "edit: delete makes a rest and joins rests");
+
+static void testDuration()
+{
+    Session s (pianoScore ({ { p ("C4"), 0, 1 }, { p ("E4"), 1, 1 }, { p ("G4"), 2, 1 }, { p ("C5"), 3, 1 } }, 4.0, 0));
+
+    // shorter: the rest of the value becomes a rest
+    auto r = s.run (req ("duration", idOf (s.score, 0), "dur", 8));
+    CHECK (r.ok);
+    CHECK_STR (right (s.score).c_str(), "m1 C4/8 r/8 E4/4 G4/4 C5/4");
+    CHECK_STR (r.select.c_str(), idOf (s.score, 0).c_str());
+
+    // longer: the rest is taken
+    r = s.run (req ("duration", idOf (s.score, 0), "dur", 4));
+    CHECK_STR (right (s.score).c_str(), "m1 C4/4 E4/4 G4/4 C5/4");
+    CHECK (s.undo.undo());
+    CHECK (s.undo.undo());
+
+    // longer than the space: the notes after it are taken out
+    r = s.run (req ("duration", idOf (s.score, 0), "dur", 2));
+    CHECK (r.ok);
+    CHECK_STR (right (s.score).c_str(), "m1 C4/2 G4/4 C5/4");
+    CHECK (r.message.find ("taken out") != std::string::npos);
+    CHECK (s.undo.undo());
+
+    // the whole bar
+    r = s.run (req ("duration", idOf (s.score, 0), "dur", 1));
+    CHECK_STR (right (s.score).c_str(), "m1 C4/1");
+    CHECK (s.undo.undo());
+
+    // dotted
+    auto dotted = req ("duration", idOf (s.score, 0), "dur", 4);
+    dotted.set ("dots", 1);
+    r = s.run (dotted);
+    CHECK_STR (right (s.score).c_str(), "m1 C4/4. r/8 G4/4 C5/4");   // E4 was covered; the eighth that is left is a rest
+    s.undo.undo();
+
+    // it does not fit
+    CHECK (! s.run (req ("duration", idOf (s.score, 3), "dur", 1)).ok);
+    CHECK (! s.run (req ("duration", idOf (s.score, 0), "dur", 3)).ok);   // there is no such value
+    CHECK (! s.run (req ("duration", idOf (s.score, 0), "dur", 4)).ok);   // it already is that
+}
+REGISTER (testDuration, "edit: length change takes and gives room");
+
+static void testDot()
+{
+    Session s (pianoScore ({ { p ("C4"), 0, 1 }, { p ("E4"), 1, 1 } }, 4.0, 0));
+    CHECK_STR (right (s.score).c_str(), "m1 C4/4 E4/4 r/2");
+    s.run (req ("dot", idOf (s.score, 0)));
+    CHECK_STR (right (s.score).c_str(), "m1 C4/4. r/8 r/2");
+    CHECK (s.undo.undo());
+    s.run (req ("dot", idOf (s.score, 1)));
+    CHECK_STR (right (s.score).c_str(), "m1 C4/4 E4/4. r/8 r/4");
+}
+REGISTER (testDot, "edit: dot");
+
+static void testTriplets()
+{
+    // three notes in the time of two: their lengths cannot be changed, but their pitch can
+    Session s (pianoScore ({ { p ("C4"), 0, 1.0 / 3 }, { p ("D4"), 1.0 / 3, 1.0 / 3 }, { p ("E4"), 2.0 / 3, 1.0 / 3 }, { p ("G4"), 1, 3 } }, 4.0, 0));
+    CHECK (events (s.score)[0]->has ("tuplet"));
+    CHECK (! s.run (req ("duration", idOf (s.score, 0), "dur", 4)).ok);
+    CHECK (s.run (req ("pitch", idOf (s.score, 1), "semitones", 2)).ok);
+    CHECK (s.run (req ("delete", idOf (s.score, 1))).ok);   // becomes a triplet rest
+    CHECK (events (s.score)[1]->type == nodeType::rest);
+    CHECK (events (s.score)[1]->has ("tuplet"));
+}
+REGISTER (testTriplets, "edit: triplets keep their length");
+
+static void testEnterNote()
+{
+    Session s (pianoScore ({ { p ("C4"), 0, 1 } }, 8.0, 0));
+    CHECK_STR (right (s.score).c_str(), "m1 C4/4 r/4 r/2 | m2 R");
+
+    // the rest after C4: a letter makes a note in the octave nearest the one before
+    auto id = idOf (s.score, 1);
+    auto j = req ("letter", id);
+    j.set ("letter", "G");
+    auto r = s.run (j);
+    CHECK (r.ok);
+    CHECK_STR (right (s.score).c_str(), "m1 C4/4 G3/4 r/2 | m2 R");   // G3 is nearer to C4 than G4
+    CHECK_STR (r.select.c_str(), id.c_str());
+
+    // a whole-bar rest gives a note of the bar's value, near the music before
+    id = idOf (s.score, 3);
+    j = req ("letter", id);
+    j.set ("letter", "E");
+    r = s.run (j);
+    CHECK (r.ok);
+    CHECK_STR (right (s.score).c_str(), "m1 C4/4 G3/4 r/2 | m2 E3/1");
+
+    // on a note the letter changes its pitch
+    j = req ("letter", idOf (s.score, 0));
+    j.set ("letter", "A");
+    CHECK (s.run (j).ok);
+    CHECK_STR (right (s.score).c_str(), "m1 A3/4 G3/4 r/2 | m2 E3/1");
+
+    // with an accidental
+    j = req ("letter", idOf (s.score, 1));
+    j.set ("letter", "B");
+    j.set ("alter", -1);
+    CHECK (s.run (j).ok);
+    CHECK_STR (right (s.score).c_str(), "m1 A3/4 Bb3!/4 r/2 | m2 E3/1");
+
+    // not a letter
+    j = req ("letter", idOf (s.score, 1));
+    j.set ("letter", "H");
+    CHECK (! s.run (j).ok);
+
+    // a 3/4 bar of rest: the note is a dotted half
+    ResolvedCapture rc;
+    ResolvedNote n;
+    n.onPpq = 0; n.offPpq = 3; n.pitch = 60;
+    rc.notes.push_back (n);
+    rc.lengthPpq = 6.0;
+    rc.bars = { { 0.0, 3, 4 }, { 3.0, 3, 4 } };
+    rc.tempoMap.push_back ({ 0.0, 120.0 });
+    TranscriptionSettings st;
+    st.keyTonic = 0;
+    Session three (transcribePiano (rc, st).score);
+    j = req ("letter", idOf (three.score, 1));
+    j.set ("letter", "C");
+    CHECK (three.run (j).ok);
+    CHECK_STR (right (three.score).c_str(), "m1 C4/2. | m2 C4/2.");
+}
+REGISTER (testEnterNote, "edit: enter a note on a rest, change the letter");
+
+static void testChords()
+{
+    Session s (pianoScore ({ { p ("C4"), 0, 1 }, { p ("G4"), 1, 1 } }, 4.0, 0));
+
+    auto j = req ("interval", idOf (s.score, 0));
+    j.set ("interval", 3);
+    auto r = s.run (j);
+    CHECK (r.ok);
+    CHECK_STR (right (s.score).c_str(), "m1 [C4 E4]/4 G4/4 r/2");
+    CHECK_STR (r.select.c_str(), idOf (s.score, 0).c_str());
+
+    // another one on the chord: a fifth above the top note
+    j = req ("interval", idOf (s.score, 0));
+    j.set ("interval", 5);
+    CHECK (s.run (j).ok);
+    CHECK_STR (right (s.score).c_str(), "m1 [C4 E4 B4]/4 G4/4 r/2");   // a fifth above E4
+    CHECK (s.undo.undo());
+
+    // chord: the pitch moves all of them
+    CHECK (s.run (req ("pitch", idOf (s.score, 0), "semitones", 1)).ok);
+    CHECK_STR (right (s.score).c_str(), "m1 [C#4! F4]/4 G4/4 r/2");
+    CHECK (s.undo.undo());
+
+    // one note of a chord: select it by its own id
+    const auto chord = events (s.score)[0];
+    CHECK (chord->type == nodeType::chord);
+    const auto upper = chord->children[1].id;
+    CHECK (s.run (req ("pitch", upper, "semitones", 2)).ok);
+    CHECK_STR (right (s.score).c_str(), "m1 [C4 F#4!]/4 G4/4 r/2");
+    CHECK (s.undo.undo());
+
+    // moving one note onto another is refused
+    CHECK (! s.run (req ("pitch", upper, "semitones", -4)).ok);
+
+    // taking a note out of a two-note chord leaves a plain note
+    auto r2 = s.run (req ("delete", upper));
+    CHECK (r2.ok);
+    CHECK_STR (right (s.score).c_str(), "m1 C4/4 G4/4 r/2");
+    CHECK (events (s.score)[0]->type == nodeType::note);
+
+    // the whole chord becomes a rest
+    CHECK (s.undo.undo());
+    CHECK (s.run (req ("delete", idOf (s.score, 0))).ok);
+    CHECK_STR (right (s.score).c_str(), "m1 r/4 G4/4 r/2");
+
+    // a rest cannot get an interval
+    j = req ("interval", idOf (s.score, 0));
+    j.set ("interval", 3);
+    CHECK (! s.run (j).ok);
+    j = req ("interval", idOf (s.score, 1));
+    j.set ("interval", 9);
+    CHECK (! s.run (j).ok);
+}
+REGISTER (testChords, "edit: chords, one note of a chord");
+
+static void testTies()
+{
+    Session s (pianoScore ({ { p ("C4"), 0, 1 }, { p ("C4"), 1, 1 }, { p ("D4"), 2, 1 }, { p ("D4"), 3, 1 }, { p ("D4"), 4, 1 } }, 8.0, 0));
+
+    auto r = s.run (req ("tie", idOf (s.score, 0)));
+    CHECK (r.ok);
+    CHECK_STR (events (s.score)[0]->prop ("tie").asString().c_str(), "i");
+    CHECK_STR (events (s.score)[1]->prop ("tie").asString().c_str(), "t");
+    CHECK (events (s.score)[1]->prop ("accid").asString().empty());
+
+    // a tie to a different pitch is refused
+    CHECK (! s.run (req ("tie", idOf (s.score, 1))).ok);
+
+    // across the bar line
+    CHECK (s.run (req ("tie", idOf (s.score, 3))).ok);
+    CHECK_STR (events (s.score)[3]->prop ("tie").asString().c_str(), "i");
+    CHECK_STR (events (s.score)[4]->prop ("tie").asString().c_str(), "t");
+
+    // a note followed by a rest has nothing to tie to
+    CHECK (! s.run (req ("tie", idOf (s.score, 4))).ok);
+}
+REGISTER (testTies, "edit: tie");
+
+static void testTieKept()
+{
+    // three notes of one pitch tied in a row
+    Session s (pianoScore ({ { p ("C4"), 0, 1 }, { p ("C4"), 1, 1 }, { p ("C4"), 2, 1 } }, 4.0, 0));
+    CHECK (s.run (req ("tie", idOf (s.score, 0))).ok);
+    CHECK (s.run (req ("tie", idOf (s.score, 1))).ok);
+    CHECK_STR (events (s.score)[1]->prop ("tie").asString().c_str(), "m");
+
+    // taking the middle one out removes the ties that led to and from it
+    CHECK (s.run (req ("delete", idOf (s.score, 1))).ok);
+    CHECK (events (s.score)[0]->prop ("tie").asString().empty());
+    CHECK (events (s.score)[2]->prop ("tie").asString().empty());
+
+    // moving a tied note takes its tie away
+    CHECK (s.undo.undo());
+    CHECK (s.run (req ("pitch", idOf (s.score, 1), "semitones", 2)).ok);
+    CHECK (events (s.score)[0]->prop ("tie").asString().empty());
+    CHECK (events (s.score)[2]->prop ("tie").asString().empty());
+}
+REGISTER (testTieKept, "edit: ties follow the notes");
+
+static void testBeams()
+{
+    Session s (pianoScore ({ { p ("C4"), 0, 0.5 }, { p ("D4"), 0.5, 0.5 }, { p ("E4"), 1, 0.5 }, { p ("F4"), 1.5, 0.5 } }, 4.0, 0));
+    CHECK_STR (right (s.score).c_str(), "m1 ( C4/8 D4/8 ) ( E4/8 F4/8 ) r/2");
+    s.run (req ("delete", idOf (s.score, 1)));
+    CHECK_STR (right (s.score).c_str(), "m1 C4/8 r/8 ( E4/8 F4/8 ) r/2");   // a lone eighth has no beam
+    CHECK (s.undo.undo());
+    s.run (req ("duration", idOf (s.score, 1), "dur", 4));
+    CHECK_STR (right (s.score).c_str(), "m1 C4/8 D4/4 F4/8 r/2");
+}
+REGISTER (testBeams, "edit: beams are made again");
+
+static void testUndo()
+{
+    Session s (pianoScore ({ { p ("C4"), 0, 1 }, { p ("E4"), 1, 1 } }, 4.0, 0));
+    const Score original = s.score;
+
+    CHECK (! performEdit (s.score, s.undo, [] { Json j = Json::object(); j.set ("op", "undo"); return j; }()).ok);
+
+    CHECK (performEdit (s.score, s.undo, req ("pitch", idOf (s.score, 0), "semitones", 1)).ok);
+    CHECK (performEdit (s.score, s.undo, req ("pitch", idOf (s.score, 1), "semitones", 1)).ok);
+    CHECK_STR (s.undo.undoName().c_str(), "Change pitch");
+
+    Json u = Json::object();
+    u.set ("op", "undo");
+    Json redo = Json::object();
+    redo.set ("op", "redo");
+    CHECK (performEdit (s.score, s.undo, u).ok);
+    CHECK (performEdit (s.score, s.undo, u).ok);
+    CHECK (s.score == original);
+    CHECK (! performEdit (s.score, s.undo, u).ok);
+    CHECK (performEdit (s.score, s.undo, redo).ok);
+    CHECK_STR (right (s.score).c_str(), "m1 C#4!/4 E4/4 r/2");
+}
+REGISTER (testUndo, "edit: undo and redo as operations");
+
+static void testBlocked()
+{
+    // guitar and drums are not edited yet
+    TranscriptionSettings settings;
+    ResolvedCapture rc = takeOf ({ { 40, 0, 1 } }, 4.0);
+    auto guitar = transcribeFretted (rc, settings, InstrumentType::guitar).score;
+    UndoManager undo (guitar);
+    CHECK (! editBlocker (guitar).empty());
+    CHECK (! performEdit (guitar, undo, req ("delete", idOf (guitar, 0))).ok);
+
+    auto drums = transcribeDrums (takeOf ({ { 38, 0, 0.1 } }, 4.0), settings, drumPreset ("gm")).score;
+    CHECK (! editBlocker (drums).empty());
+
+    Score empty;
+    CHECK (! editBlocker (empty).empty());
+}
+REGISTER (testBlocked, "edit: guitar, bass and drum scores are refused");
+
+//==============================================================================
+// Random edits on random takes: the score stays well formed, every step undoes and redoes exactly,
+// and measures that were not touched stay as they were.
+static void testRandomEdits()
+{
+    std::mt19937 rng (7);
+    int applied = 0, refused = 0;
+
+    for (int take = 0; take < 40; ++take)
+    {
+        std::vector<N> notes;
+        const int count = 6 + (int) (rng() % 20);
+        const int beats = rng() % 3 == 0 ? 3 : 4;                // some takes in 3/4
+        const double shift = rng() % 4 == 0 ? 2.5 : 0.0;          // some start late: a pickup bar
+
+        for (int i = 0; i < count; ++i)
+        {
+            const double start = shift + (double) (rng() % 60) * 0.25;
+            const double dur = 0.25 * (double) (1 + rng() % 6);
+            notes.push_back ({ 45 + (int) (rng() % 36), start, dur });
+        }
+
+        Session s (pianoScore (notes, 18.0, (int) (rng() % 12), rng() % 2 == 0, beats));
+        CHECK_STR (problems (s.score).c_str(), "");
+        const Score start = s.score;
+
+        // an edit and its opposite give back exactly the generated score: nothing else is rewritten
+        {
+            Session probe (start);
+            const auto all = events (probe.score);
+            const auto* note = all[rng() % all.size()];
+
+            if (note->type == nodeType::note && note->prop ("pitch").asInt() < 90 && note->prop ("tie").asString().empty())   // a tied note loses its tie when it moves
+            {
+                CHECK (probe.run (req ("pitch", note->id, "semitones", 12)).ok);
+                CHECK (probe.run (req ("pitch", note->id, "semitones", -12)).ok);
+                CHECK (probe.score == start);
+                if (! (probe.score == start))
+                    std::printf ("=== before\n%s=== after\n%s", dumpScore (start).c_str(), dumpScore (probe.score).c_str());
+            }
+        }
+        std::vector<Score> history { start };
+
+        for (int step = 0; step < 60; ++step)
+        {
+            const auto all = events (s.score);
+            const auto* target = all[rng() % all.size()];
+            std::string id = target->id;
+
+            if (target->type == nodeType::chord && rng() % 2 == 0)
+                id = target->children[rng() % target->children.size()].id;
+
+            Json j = Json::object();
+            const auto kind = rng() % 7;
+
+            switch (kind)
+            {
+                case 0: j = req ("pitch", id, "semitones", (int) (rng() % 5) - 2); break;
+                case 1: j = req ("pitch", id, "semitones", rng() % 2 == 0 ? 12 : -12); break;
+                case 2: j = req ("duration", id, "dur", 1 << (rng() % 6)); j.set ("dots", (int) (rng() % 2)); break;
+                case 3: j = req ("delete", id); break;
+                case 4: j = req ("letter", id); j.set ("letter", std::string (1, "ABCDEFG"[rng() % 7])); break;
+                case 5: j = req ("interval", id, "interval", 2 + (int) (rng() % 7)); break;
+                default: j = req ("tie", id); break;
+            }
+
+            const Score before = s.score;
+            const auto result = performEdit (s.score, s.undo, j);
+
+            if (result.ok)
+            {
+                ++applied;
+                history.push_back (s.score);
+                CHECK (! (s.score == before));
+            }
+            else
+            {
+                ++refused;
+                CHECK (s.score == before);
+            }
+
+            const auto p = problems (s.score);
+
+            if (! p.empty())
+                std::printf ("    take %d step %d: %s after %s\n", take, step, p.c_str(), j.dump().c_str());
+
+            CHECK_STR (p.c_str(), "");
+        }
+
+        // undo everything: every state comes back in turn
+        for (size_t i = history.size() - 1; i > 0; --i)
+        {
+            CHECK (s.score == history[i]);
+            CHECK (s.undo.undo());
+        }
+
+        CHECK (s.score == start);
+
+        // redo everything
+        for (size_t i = 1; i < history.size(); ++i)
+        {
+            CHECK (s.undo.redo());
+            CHECK (s.score == history[i]);
+        }
+    }
+
+    CHECK (applied > 300);
+    CHECK (refused > 20);
+}
+REGISTER (testRandomEdits, "edit: random edits stay well formed and undo exactly");
+
+static void testOtherMeasuresUntouched()
+{
+    Session s (pianoScore ({ { p ("C4"), 0, 1 }, { p ("D4"), 4, 1 }, { p ("E4"), 8, 1 }, { p ("F4"), 12, 1 } }, 16.0, 0));
+
+    auto blocks = [] (const Score& score)
+    {
+        std::vector<std::string> out;
+        const auto text = dumpScore (score);
+        size_t at = 0;
+
+        while (at < text.size())
+        {
+            auto end = text.find ('\n', at);
+
+            if (end == std::string::npos)
+                end = text.size();
+
+            const auto line = text.substr (at, end - at);
+            at = end + 1;
+
+            if (line.rfind ("m", 0) == 0)
+                out.emplace_back();
+
+            if (! out.empty())
+                out.back() += line + "\n";
+        }
+
+        return out;
+    };
+
+    const auto before = blocks (s.score);
+    CHECK (performEdit (s.score, s.undo, req ("pitch", idOf (s.score, 3), "semitones", 1)).ok);
+    const auto after = blocks (s.score);
+    CHECK_EQ (before.size(), after.size());
+
+    int differing = 0;
+
+    for (size_t i = 0; i < before.size() && i < after.size(); ++i)
+        differing += before[i] == after[i] ? 0 : 1;
+
+    CHECK_EQ (differing, 1);
+}
+REGISTER (testOtherMeasuresUntouched, "edit: only the measure that changed is written");
+
+//==============================================================================
+// The practice clip of the Live test sheet: the same steps as written there.
+#ifdef TRANSCRIBER_FIXTURES_DIR
+#include "MidiReader.h"
+
+namespace
+{
+    bool startsWith (const std::string& text, const std::string& prefix) { return text.rfind (prefix, 0) == 0; }
+}
+
+static void testPracticeClip()
+{
+    const auto file = midireader::read (std::string (TRANSCRIBER_FIXTURES_DIR) + "/t41-edit-practice.mid");
+    CHECK (file.ok);
+
+    Session s (transcribePiano (file.capture, {}).score);
+    CHECK_STR (right (s.score).c_str(), "m1 [C4 E4 G4]/4 D4/4 E4/2 | m2 C4/4 C4/4 ( F4/8 G4/8 ) A4/4 | m3 C5/1");
+
+    // 1: the chord: one note on its own, then the whole chord an octave up
+    const auto chord = events (s.score)[0];
+    CHECK (chord->type == nodeType::chord);
+    CHECK (s.run (req ("pitch", chord->children[1].id, "semitones", 1)).ok);                 // E4 -> F4
+    CHECK (startsWith (right (s.score), "m1 [C4 F4 G4]/4 D4/4 E4/2"));
+    CHECK (s.run (req ("pitch", chord->id, "semitones", 12)).ok);
+    CHECK (startsWith (right (s.score), "m1 [C5 F5 G5]/4 D4/4 E4/2"));
+    CHECK (s.undo.undo());
+    CHECK (s.undo.undo());
+
+    // 2: the D4 up a half step shows a sharp
+    CHECK (s.run (req ("pitch", idOf (s.score, 1), "semitones", 1)).ok);
+    CHECK (events (s.score)[1]->prop ("accid").asString() == "s");
+    CHECK (s.undo.undo());
+
+    // 3: a rest where the D4 was; then a note back with a letter
+    CHECK (s.run (req ("delete", idOf (s.score, 1))).ok);
+    CHECK (startsWith (right (s.score), "m1 [C4 E4 G4]/4 r/4 E4/2"));
+    auto j = req ("letter", idOf (s.score, 1));
+    j.set ("letter", "F");
+    CHECK (s.run (j).ok);
+    CHECK (startsWith (right (s.score), "m1 [C4 E4 G4]/4 F4/4 E4/2"));
+    CHECK (s.undo.undo());
+    CHECK (s.undo.undo());
+
+    // 4: the half note E4 shortened to a quarter leaves a rest, then lengthened over the rest again
+    CHECK (s.run (req ("duration", idOf (s.score, 2), "dur", 4)).ok);
+    CHECK (startsWith (right (s.score), "m1 [C4 E4 G4]/4 D4/4 E4/4 r/4"));
+    CHECK (s.run (req ("duration", idOf (s.score, 2), "dur", 2)).ok);
+    CHECK (startsWith (right (s.score), "m1 [C4 E4 G4]/4 D4/4 E4/2"));
+    CHECK (s.undo.undo());
+    CHECK (s.undo.undo());
+
+    // 5: the two C4 quarters of bar 2 tied
+    CHECK (s.run (req ("tie", idOf (s.score, 3))).ok);
+    CHECK_STR (events (s.score)[3]->prop ("tie").asString().c_str(), "i");
+    CHECK_STR (events (s.score)[4]->prop ("tie").asString().c_str(), "t");
+
+    // 6: an octave down for the last note, and a third added to it
+    CHECK (s.run (req ("pitch", idOf (s.score, 8), "semitones", -12)).ok);
+    auto add = req ("interval", idOf (s.score, 8));
+    add.set ("interval", 3);
+    CHECK (s.run (add).ok);
+    CHECK (right (s.score).find ("| m3 [C4 E4]/1") != std::string::npos);
+}
+REGISTER (testPracticeClip, "edit: the practice clip of the Live test sheet");
+#endif

@@ -296,6 +296,13 @@ void Version::setTranscriptionSettings (const TranscriptionSettings& s)
     regenerate();
 }
 
+void Version::discardEdits()
+{
+    scoreEdited = false;
+    ++readingRevision;   // the score is a new one: whoever shows it draws it again
+    regenerate();
+}
+
 void Version::regenerate()
 {
     if (scoreEdited)

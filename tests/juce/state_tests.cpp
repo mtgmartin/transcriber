@@ -537,6 +537,94 @@ namespace
         CHECK_STR (service.getStatus().getProperty ("instrument", {}).toString().toRawUTF8(), "bass");
     }
 
+    juce::var editRequest (const char* op, const juce::String& id, int semitones = 0)
+    {
+        auto* o = new juce::DynamicObject();
+        o->setProperty ("op", op);
+
+        if (id.isNotEmpty())
+            o->setProperty ("id", id);
+
+        if (semitones != 0)
+            o->setProperty ("semitones", semitones);
+
+        return juce::var (o);
+    }
+
+    void testEditing()
+    {
+        CaptureService service;
+        record (service, 4, 0);
+        CHECK (waitForVersions (service, 1));
+
+        auto status = service.getStatus();
+        const auto original = status.getProperty ("scoreText", {}).toString();
+        CHECK (! (bool) status.getProperty ("transcription", {}).getProperty ("edited", true));
+        CHECK (! (bool) status.getProperty ("edit", {}).getProperty ("canUndo", true));
+        CHECK (status.getProperty ("edit", {}).getProperty ("blocked", "x").toString().isEmpty());
+
+        // the id of the first note on the page
+        const auto mei = service.getMei().getProperty ("mei", {}).toString();
+        const auto at = mei.indexOf ("<note xml:id=\"");
+        CHECK (at >= 0);
+        const auto id = mei.substring (at + 14).upToFirstOccurrenceOf ("\"", false, false);
+
+        // an edit marks the score as edited and can be undone
+        auto result = service.editScore (editRequest ("pitch", id, 1));
+        CHECK ((bool) result.getProperty ("ok", false));
+        status = service.getStatus();
+        const auto edited = status.getProperty ("scoreText", {}).toString();
+        CHECK (edited != original);
+        CHECK ((bool) status.getProperty ("transcription", {}).getProperty ("edited", false));
+        CHECK ((bool) status.getProperty ("edit", {}).getProperty ("canUndo", false));
+        CHECK_STR (status.getProperty ("edit", {}).getProperty ("undoName", {}).toString().toRawUTF8(), "Change pitch");
+        CHECK (service.getMei().getProperty ("key", {}).toString() == status.getProperty ("scoreKey", {}).toString());
+
+        // an edited score is not written again: the settings are locked
+        service.setTranscriptionSetting ("grid", 4);
+        service.setInstrument ("guitar");
+        status = service.getStatus();
+        CHECK_EQ ((int) status.getProperty ("settings", {}).getProperty ("grid", 0), 16);
+        CHECK_STR (status.getProperty ("scoreText", {}).toString().toRawUTF8(), edited.toRawUTF8());
+        service.setInstrument ("piano");
+
+        // a refused edit says why and changes nothing
+        result = service.editScore (editRequest ("pitch", "no-such-id", 1));
+        CHECK (! (bool) result.getProperty ("ok", true));
+        CHECK (result.getProperty ("message", {}).toString().isNotEmpty());
+        CHECK_STR (service.getStatus().getProperty ("scoreText", {}).toString().toRawUTF8(), edited.toRawUTF8());
+
+        // the edit is saved with the document and comes back as it was
+        juce::MemoryBlock saved;
+        service.saveState (saved);
+        CaptureService again;
+        again.loadState (saved.getData(), saved.getSize());
+        auto loaded = again.getStatus();
+        CHECK_STR (loaded.getProperty ("scoreText", {}).toString().toRawUTF8(), edited.toRawUTF8());
+        CHECK ((bool) loaded.getProperty ("transcription", {}).getProperty ("edited", false));
+        CHECK (! (bool) loaded.getProperty ("edit", {}).getProperty ("canUndo", true));   // the history is not saved
+
+        // undo and redo
+        CHECK ((bool) service.editScore (editRequest ("undo", {})).getProperty ("ok", false));
+        CHECK_STR (service.getStatus().getProperty ("scoreText", {}).toString().toRawUTF8(), original.toRawUTF8());
+        CHECK ((bool) service.getStatus().getProperty ("edit", {}).getProperty ("canRedo", false));
+        CHECK ((bool) service.editScore (editRequest ("redo", {})).getProperty ("ok", false));
+        CHECK_STR (service.getStatus().getProperty ("scoreText", {}).toString().toRawUTF8(), edited.toRawUTF8());
+
+        // discarding the edits writes the score from the recording again, and unlocks the settings
+        service.discardEdits();
+        status = service.getStatus();
+        CHECK_STR (status.getProperty ("scoreText", {}).toString().toRawUTF8(), original.toRawUTF8());
+        CHECK (! (bool) status.getProperty ("transcription", {}).getProperty ("edited", true));
+        CHECK (! (bool) status.getProperty ("edit", {}).getProperty ("canUndo", true));
+        service.setTranscriptionSetting ("grid", 4);
+        CHECK_EQ ((int) service.getStatus().getProperty ("settings", {}).getProperty ("grid", 0), 4);
+
+        // guitar scores are not edited yet
+        service.setInstrument ("guitar");
+        CHECK (service.getStatus().getProperty ("edit", {}).getProperty ("blocked", {}).toString().isNotEmpty());
+    }
+
     struct Test { const char* name; void (*fn)(); };
 
 
@@ -551,6 +639,7 @@ namespace
         { "service: the state size is reported", testStateSizeIsReported },
         { "service: transcription settings", testTranscriptionSettings },
         { "service: instruments and drum maps", testInstrumentsAndDrumMaps },
+        { "service: editing the score", testEditing },
     };
 }
 

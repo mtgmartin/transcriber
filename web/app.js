@@ -201,7 +201,9 @@ on("capture", function (s) {
   $("cap-summary").textContent = summary.join(" · ");
 
   // The reading of a take can be changed whenever the take is not being recorded (also after Live was reopened).
-  const hasCapture = s.state !== "recording" && s.state !== "armed" && s.rawNotes > 0;
+  // (an edited score is not written again, so its reading is locked until the edits are discarded)
+  const edited = !!(s.transcription && s.transcription.edited);
+  const hasCapture = s.state !== "recording" && s.state !== "armed" && s.rawNotes > 0 && !edited;
   $("mode-loop").classList.toggle("active", s.mode === "oneLoop");
   $("mode-played").classList.toggle("active", s.mode === "asPlayed");
   $("mode-loop").disabled = $("mode-played").disabled = $("redetect").disabled = !hasCapture;
@@ -268,10 +270,11 @@ $("set-key").addEventListener("change", function (e) {
 function showTranscription(s) {
   const has = !!s.settings;
   const instrument = s.instrument || "piano";
-  ["set-grid", "set-triplets", "set-split", "set-pickup", "set-key"].forEach(function (id) { $(id).disabled = !has || s.state === "recording"; });
+  const locked = !!(s.transcription && s.transcription.edited);
+  ["set-grid", "set-triplets", "set-split", "set-pickup", "set-key"].forEach(function (id) { $(id).disabled = !has || s.state === "recording" || locked; });
 
   // the instrument can be chosen before the first recording: it is used for the next one
-  $("set-instrument").disabled = s.state === "recording" || s.state === "armed";
+  $("set-instrument").disabled = s.state === "recording" || s.state === "armed" || locked;
   if (document.activeElement !== $("set-instrument")) $("set-instrument").value = instrument;
   $("grp-split").hidden = instrument !== "piano";
   $("grp-key").hidden = instrument === "drums";

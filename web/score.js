@@ -163,6 +163,7 @@
     if (selectedId && m.mei.indexOf('xml:id="' + selectedId + '"') < 0) {
       selectedId = "";
       info.textContent = "Click a note or a rest to see what it is.";
+      window.dispatchEvent(new Event("transcriber-selection"));
     }
     meiKey = m.key;
     mei = m.mei;
@@ -185,21 +186,30 @@
   holder.addEventListener("click", function (e) {
     const target = e.target.closest ? e.target.closest("g.note, g.rest, g.mRest, g.chord") : null;
     if (!target) {
-      selectedId = "";
-      applySelection(false);
-      info.textContent = "Click a note or a rest to see what it is.";
+      select("");
       return;
     }
 
-    // a note inside a chord selects the chord; so does a note of a tablature group of several notes
+    // a note inside a chord selects the chord, and a second click on one of its notes selects just that note;
+    // a note of a tablature group of several notes selects the group
     const chord = target.parentElement && target.parentElement.closest ? target.parentElement.closest("g.chord") : null;
     const group = target.closest("g.tabGrp");
     const tabChord = group && group.querySelectorAll("g.note").length > 1 ? group : null;
-    selectedId = (chord || tabChord || target).id;
-    applySelection(true);
-    info.textContent = "…";
-    send("nodeInfo", { id: selectedId });
+    const current = selectedId ? holder.querySelector('[id="' + selectedId.replace(/"/g, '\\"') + '"]') : null;
+    const sameChord = chord && (selectedId === chord.id || (current && chord.contains(current)));
+    select(sameChord && target.classList.contains("note") ? target.id : (chord || tabChord || target).id);
   });
+
+  // The selection: a click, or the editor (after it made a new note, or to ask again what the selected one is).
+  function select(id) {
+    selectedId = id || "";
+    applySelection(false);
+
+    if (selectedId) { info.textContent = "…"; send("nodeInfo", { id: selectedId }); }
+    else info.textContent = "Click a note or a rest to see what it is.";
+
+    window.dispatchEvent(new Event("transcriber-selection"));
+  }
 
   on("nodeInfo", function (r) {
     if (r.id !== selectedId) return;
@@ -238,5 +248,5 @@
   });
 
   // for tests in a browser
-  window.transcriberScore = { render: render, settings: settings, setMei: function (m) { mei = m; showEmpty(false); render(); } };
+  window.transcriberScore = { render: render, settings: settings, selected: function () { return selectedId; }, select: select, setMei: function (m) { mei = m; showEmpty(false); render(); } };
 })();

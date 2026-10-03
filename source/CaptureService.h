@@ -5,9 +5,13 @@
 #include "MidiCompare.h"
 #include "core/CaptureEngine.h"
 #include "core/CaptureModel.h"
+#include "core/Commands.h"
 #include "core/Document.h"
+#include "core/Edit.h"
 
 #include <algorithm>
+#include <map>
+#include <memory>
 #include <mutex>
 #include <string>
 #include <vector>
@@ -61,6 +65,13 @@ public:
     // empty when there is no score). The key changes whenever the score does.
     juce::var getMei() const;
 
+    // One edit of the score of the version that is shown (see core/Edit.h for the requests): { ok, message, select }.
+    // The first edit marks the score as edited, so that changing the reading or the settings no longer writes it again.
+    juce::var editScore (const juce::var& request);
+
+    // Throws the edits of the shown version away: the score is made from the recording again.
+    void discardEdits();
+
     // What a click on a note, rest or chord of the engraved score should say.
     juce::String describeScoreNode (const juce::String& id) const;
     uint64_t getRevision() const;
@@ -89,6 +100,10 @@ private:
     std::string addUserDrumMap (trs::DrumMap, bool replaceSameId);
 
     uint64_t drumMapRevision = 0;
+
+    // The undo history of each edited version (not saved with the document).
+    std::map<std::string, std::unique_ptr<trs::UndoManager>> histories;
+    trs::UndoManager& historyOf (trs::Version&);
 
     trs::CaptureEngine engine;
     mutable std::mutex mutex;
