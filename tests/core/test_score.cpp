@@ -837,6 +837,35 @@ namespace
         CHECK_STR (doc.find (copy)->title.c_str(), "Title");
     }
 
+    void testDefaultTranspose()
+    {
+        Document doc;
+        const auto capture = recordClip (127.0, 4, 0);
+        const auto first = doc.addVersion (capture, detectReading (capture).reading, detectReading (capture), 1);
+        CHECK_EQ (doc.find (first)->transcriptionSettings().transpose, 0);
+
+        // a new take gets the transposition chosen for the next recording; the first one keeps its own
+        doc.defaultTranspose = -5;
+        const auto second = doc.addVersion (capture, detectReading (capture).reading, detectReading (capture), 2);
+        CHECK_EQ (doc.find (second)->transcriptionSettings().transpose, -5);
+        CHECK_EQ (doc.find (first)->transcriptionSettings().transpose, 0);
+
+        // saved and loaded; a document without it has none (0); a wild value is brought back
+        Json parsed;
+        CHECK (Json::parse (doc.toJson().dump(), parsed));
+        Document loaded;
+        CHECK (Document::fromJson (parsed, loaded) == LoadResult::ok);
+        CHECK_EQ (loaded.defaultTranspose, -5);
+        CHECK_EQ (loaded.find (second)->transcriptionSettings().transpose, -5);
+        doc.defaultTranspose = 0;
+        CHECK (doc.toJson().dump().find ("defaultTranspose") == std::string::npos);
+        auto wild = parsed;
+        wild.set ("defaultTranspose", 1000);
+        Document clamped;
+        CHECK (Document::fromJson (wild, clamped) == LoadResult::ok);
+        CHECK_EQ (clamped.defaultTranspose, 48);
+    }
+
     void testDocumentRoundTrip()
 
     {
@@ -1084,6 +1113,7 @@ namespace
     REGISTER (testReadingIsPerVersion, "versions: the reading belongs to the version");
     REGISTER (testDocumentProfiles, "document: instrument profiles");
     REGISTER (testTitleAndComposer, "document: title and composer of a score");
+    REGISTER (testDefaultTranspose, "document: the transposition of the next recording");
     REGISTER (testDocumentRoundTrip, "document: save and load round trip");
     REGISTER (testEmptyDocumentRoundTrip, "document: empty round trip");
     REGISTER (testLoadRejectsDamagedState, "document: damaged state is rejected");

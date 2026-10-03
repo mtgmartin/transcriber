@@ -33,3 +33,10 @@ $d += , @(49, 6.0, 0.25, 110)
 Save "t82-drum-roll.mid" $d 8.0
 
 Get-ChildItem $out -Filter "t8*.mid" | Select-Object Name, Length
+
+# t83-scale (Phase 8e): 2 bars of 4/4, a C major scale in quarter notes from C4 to C5.
+$sc = @(60, 62, 64, 65, 67, 69, 71, 72)
+$t = @()
+for ($i = 0; $i -lt 8; $i++) { $t += , @($sc[$i], [double]$i, 1.0, 95) }
+Save "t83-scale.mid" $t 8.0
+Get-ChildItem $out -Filter "t83*.mid" | Select-Object Name, Length

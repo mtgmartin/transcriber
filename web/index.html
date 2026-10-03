@@ -214,6 +214,11 @@
         <option value="4">1/4</option><option value="8">1/8</option><option value="16">1/16</option><option value="32">1/32</option><option value="64">1/64</option><option value="128">1/128</option>
       </select>
       <label><input type="checkbox" id="set-triplets"> Triplets</label>
+      <span id="grp-transpose">
+        <label for="set-transpose" title="For a synth that plays other pitches than the notes it receives: this is added to every note before the score is made">Transpose</label>
+        <input id="set-transpose" type="number" min="-48" max="48" step="1" value="0" title="Semitones, -48 to 48; the next recording gets it too">
+        <span class="dim">semitones</span>
+      </span>
       <span id="grp-split">
         <label for="set-split">Hands split at</label>
         <input id="set-split" type="number" min="21" max="108" step="1" value="60">

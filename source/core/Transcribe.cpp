@@ -17,6 +17,7 @@ Json TranscriptionSettings::toJson() const
     auto j = Json::object();
     j.set ("grid", grid);
     j.set ("triplets", triplets);
+    j.set ("transpose", transpose);
     j.set ("splitPoint", splitPoint);
     j.set ("autoPickup", autoPickup);
     j.set ("keyTonic", keyTonic);
@@ -30,6 +31,7 @@ TranscriptionSettings TranscriptionSettings::fromJson (const Json& j)
     const auto grid = (int) j.get ("grid").asInt (s.grid);
     s.grid = grid == 4 || grid == 8 || grid == 16 || grid == 32 || grid == 64 || grid == 128 ? grid : s.grid;
     s.triplets = j.get ("triplets").asBool (s.triplets);
+    s.transpose = std::max (-48, std::min (48, (int) j.get ("transpose").asInt (0)));
     s.splitPoint = std::max (21, std::min (108, (int) j.get ("splitPoint").asInt (s.splitPoint)));
     s.autoPickup = j.get ("autoPickup").asBool (s.autoPickup);
     const auto tonic = (int) j.get ("keyTonic").asInt (-1);
@@ -40,7 +42,7 @@ TranscriptionSettings TranscriptionSettings::fromJson (const Json& j)
 
 bool TranscriptionSettings::operator== (const TranscriptionSettings& o) const
 {
-    return grid == o.grid && triplets == o.triplets && splitPoint == o.splitPoint && autoPickup == o.autoPickup
+    return grid == o.grid && triplets == o.triplets && transpose == o.transpose && splitPoint == o.splitPoint && autoPickup == o.autoPickup
         && keyTonic == o.keyTonic && keyMinor == o.keyMinor;
 }
 

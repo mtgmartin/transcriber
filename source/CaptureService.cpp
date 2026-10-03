@@ -156,6 +156,18 @@ void CaptureService::setTranscriptionSetting (const juce::String& name, const ju
     const std::lock_guard<std::mutex> lock (mutex);
     auto* v = document.activeMutable();
 
+    // the transposition can be chosen before the first recording: it is what the next one gets
+    if (name == "transpose")
+    {
+        const auto semitones = std::max (-48, std::min (48, (int) value));
+
+        if (semitones != document.defaultTranspose)
+        {
+            document.defaultTranspose = semitones;
+            document.markChanged();
+        }
+    }
+
     if (v == nullptr || v->scoreEdited)   // an edited score is not written again
         return;
 
@@ -163,6 +175,7 @@ void CaptureService::setTranscriptionSetting (const juce::String& name, const ju
 
     if (name == "grid")            s.grid = (int) value;
     else if (name == "triplets")   s.triplets = (bool) value;
+    else if (name == "transpose")  s.transpose = (int) value;
     else if (name == "splitPoint") s.splitPoint = (int) value;
     else if (name == "autoPickup") s.autoPickup = (bool) value;
     else if (name == "keyTonic")   s.keyTonic = (int) value;
@@ -506,6 +519,7 @@ juce::var CaptureService::getStatus() const
         auto* st = new juce::DynamicObject();
         st->setProperty ("grid", settings.grid);
         st->setProperty ("triplets", settings.triplets);
+        st->setProperty ("transpose", settings.transpose);
         st->setProperty ("splitPoint", settings.splitPoint);
         st->setProperty ("autoPickup", settings.autoPickup);
         st->setProperty ("keyTonic", settings.keyTonic);
@@ -565,6 +579,8 @@ juce::var CaptureService::getStatus() const
         o->setProperty ("scoreText", juce::String::fromUTF8 (scoreTextCache.c_str()));
         o->setProperty ("scoreKey", juce::String (key));
     }
+
+    o->setProperty ("defaultTranspose", document.defaultTranspose);
 
     // the instrument of the shown take, or the default for the next one; the drum maps
     if (live || v == nullptr)

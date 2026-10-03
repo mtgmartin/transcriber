@@ -475,6 +475,75 @@ namespace
         CHECK_EQ (TranscriptionSettings::fromJson (bad).grid, 16);
     }
 
+    //==========================================================================
+    // Phase 8e: transposition for synths that transpose
+
+    ResolvedCapture shifted (ResolvedCapture rc, int semitones)
+    {
+        for (auto& n : rc.notes)
+            n.pitch += semitones;
+
+        return rc;
+    }
+
+    void testTranspose()
+    {
+        // a C major tune with a chord and a left hand
+        const auto tune = capture ({ { 60, 0, 1 }, { 62, 1, 1 }, { 64, 2, 1 }, { 67, 3, 1 }, { 64, 4, 2 }, { 72, 4, 2 }, { 48, 0, 2 }, { 55, 2, 2 }, { 50, 4, 4 } }, 8.0);
+
+        // the score of the transposed take is the score of a take played that many semitones higher, for every instrument that has pitches
+        for (const int k : { 2, 7, 12, -5, -12, 1 })
+        {
+            TranscriptionSettings s;
+            s.transpose = k;
+            CHECK_STR (dumpScore (transcribePiano (tune, s).score).c_str(), dumpScore (transcribePiano (shifted (tune, k), {}).score).c_str());
+
+            // (guitar and bass: notes that can be played at both pitches)
+            const auto riff = capture ({ { 52, 0, 1 }, { 55, 1, 1 }, { 57, 2, 1 }, { 59, 3, 1 }, { 57, 4, 2 }, { 62, 4, 2 } }, 8.0);
+            CHECK_STR (dumpScore (transcribeFretted (riff, s, InstrumentType::guitar).score).c_str(),
+                       dumpScore (transcribeFretted (shifted (riff, k), {}, InstrumentType::guitar).score).c_str());
+            const auto line = capture ({ { 45, 0, 1 }, { 48, 1, 1 }, { 50, 2, 1 }, { 52, 3, 1 } }, 4.0);
+            CHECK_STR (dumpScore (transcribeFretted (line, s, InstrumentType::bass).score).c_str(),
+                       dumpScore (transcribeFretted (shifted (line, k), {}, InstrumentType::bass).score).c_str());
+        }
+
+        // the key follows: C major played two semitones up is D major
+        TranscriptionSettings up;
+        up.transpose = 2;
+        const auto scale = capture ({ { 60, 0, 1 }, { 62, 1, 1 }, { 64, 2, 1 }, { 65, 3, 1 }, { 67, 4, 1 }, { 69, 5, 1 }, { 71, 6, 1 }, { 72, 7, 1 } }, 8.0);
+        CHECK_EQ (transcribePiano (scale, up).key.fifths, 2);
+        CHECK_EQ (transcribePiano (scale, {}).key.fifths, 0);
+
+        // notes pushed out of 0-127 are left out and counted; the others stay
+        TranscriptionSettings high;
+        high.transpose = 10;
+        const auto edge = transcribePiano (capture ({ { 60, 0, 1 }, { 120, 1, 1 }, { 124, 2, 1 } }, 4.0), high);
+        CHECK_EQ (edge.report.notes, 1);
+        bool told = false;
+        for (const auto& w : edge.report.warnings)
+            told = told || (w.find ("2 notes were out of range after transposing by 10") != std::string::npos);
+        CHECK (told);
+
+        // drums are not transposed
+        const auto groove = capture ({ { 36, 0, 0.25 }, { 38, 1, 0.25 }, { 42, 2, 0.25 } }, 4.0);
+        TranscriptionSettings seven;
+        seven.transpose = 7;
+        CHECK_STR (dumpScore (transcribeDrums (groove, seven, drumPreset ("gm")).score).c_str(), dumpScore (transcribeDrums (groove, {}, drumPreset ("gm")).score).c_str());
+
+        // the setting as JSON; old files have none, and too much is brought back
+        TranscriptionSettings custom;
+        custom.transpose = -7;
+        CHECK_EQ (TranscriptionSettings::fromJson (custom.toJson()).transpose, -7);
+        CHECK (TranscriptionSettings::fromJson (custom.toJson()) == custom);
+        CHECK_EQ (TranscriptionSettings::fromJson (Json()).transpose, 0);
+        auto wild = Json::object();
+        wild.set ("transpose", 100);
+        CHECK_EQ (TranscriptionSettings::fromJson (wild).transpose, 48);
+        wild.set ("transpose", -100);
+        CHECK_EQ (TranscriptionSettings::fromJson (wild).transpose, -48);
+        CHECK (! (TranscriptionSettings() == custom));
+    }
+
     void testBeatGroups()
     {
         auto joined = [] (std::vector<int64_t> v)
@@ -1308,6 +1377,7 @@ namespace
 #endif
 
     REGISTER (testCleanNotes, "transcribe: clean-up");
+    REGISTER (testTranspose, "transcribe: transposition in semitones");
     REGISTER (testFineGrids, "transcribe: 1/64 and 1/128 grids");
     REGISTER (testBuildBars, "transcribe: bars");
     REGISTER (testPickup, "transcribe: pickup bar");

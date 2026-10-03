@@ -386,7 +386,9 @@ std::string Document::addVersion (const RawCapture& capture, const Reading& read
     v.reading = reading;
     v.detection = detection;
     v.profile = defaultProfile.isObject() && defaultProfile.has ("type") ? defaultProfile : Profile().toJson();
-    v.settings = TranscriptionSettings().toJson();
+    TranscriptionSettings fresh;
+    fresh.transpose = defaultTranspose;
+    v.settings = fresh.toJson();
     v.regenerate();
 
     list.push_back (std::move (v));
@@ -532,6 +534,9 @@ Json Document::toJson() const
     j.set ("drumMaps", drumMaps);
     j.set ("defaultProfile", defaultProfile);
 
+    if (defaultTranspose != 0)
+        j.set ("defaultTranspose", defaultTranspose);
+
     auto versions = Json::array();
 
     for (const auto& v : list)
@@ -586,6 +591,7 @@ LoadResult Document::fromJson (const Json& source, Document& result, std::string
     d.uiPrefs = j.get ("uiPrefs").isObject() ? j.get ("uiPrefs") : Json::object();
     d.drumMaps = j.get ("drumMaps").isArray() ? j.get ("drumMaps") : Json::array();
     d.defaultProfile = j.get ("defaultProfile").isObject() ? j.get ("defaultProfile") : Json::object();
+    d.defaultTranspose = std::max (-48, std::min (48, (int) j.get ("defaultTranspose").asInt (0)));
 
     std::set<std::string> ids;
 

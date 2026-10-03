@@ -469,7 +469,7 @@ namespace detail
 
     // Clean-up, bars (with a pickup), quantisation. Fills the counts of the report. The bars are
     // extended when a quantised note runs past the last one.
-    inline Prepared prepareNotes (const ResolvedCapture& capture, const TranscriptionSettings& settings, TranscriptionResult& result)
+    inline Prepared prepareNotes (const ResolvedCapture& capture, const TranscriptionSettings& settings, TranscriptionResult& result, bool pitched = true)
     {
         Prepared p;
         auto& report = result.report;
@@ -477,6 +477,22 @@ namespace detail
         int dropped = 0;
         p.clean = cleanNotes (capture.notes, &dropped);
         report.mergedNotes = dropped;
+
+        // a synth that plays other pitches than it receives: the score shows what is heard (the recording itself is not changed)
+        if (pitched && settings.transpose != 0)
+        {
+            for (auto& n : p.clean)
+                n.pitch += settings.transpose;
+
+            const auto before = p.clean.size();
+            p.clean.erase (std::remove_if (p.clean.begin(), p.clean.end(), [] (const ResolvedNote& n) { return n.pitch < 0 || n.pitch > 127; }), p.clean.end());
+            const auto gone = before - p.clean.size();
+
+            if (gone > 0)
+                report.warnings.push_back (std::to_string (gone) + (gone == 1 ? " note was" : " notes were") + " out of range after transposing by "
+                                           + std::to_string (settings.transpose) + " semitones and " + (gone == 1 ? "was" : "were") + " left out.");
+        }
+
         report.notes = (int) p.clean.size();
 
         int64_t end = toTicks (capture.lengthPpq);

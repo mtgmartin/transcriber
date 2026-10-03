@@ -749,6 +749,55 @@ namespace
         CHECK (! (bool) service.getStatus().getProperty ("edit", {}).getProperty ("canUndo", true));
     }
 
+
+    void testTransposing()
+    {
+        CaptureService service;
+
+        // before the first recording the transposition is chosen for the next one
+        service.setTranscriptionSetting ("transpose", 2);
+        CHECK_EQ ((int) service.getStatus().getProperty ("defaultTranspose", 99), 2);
+
+        record (service, 4, 0);
+        CHECK (waitForVersions (service, 1));
+        auto status = service.getStatus();
+        CHECK_EQ ((int) status.getProperty ("settings", {}).getProperty ("transpose", 99), 2);
+        const auto up = status.getProperty ("scoreText", {}).toString();
+
+        // changed on the take: the score is made again from the recording, and the next take gets the value too
+        service.setTranscriptionSetting ("transpose", 0);
+        status = service.getStatus();
+        CHECK_EQ ((int) status.getProperty ("settings", {}).getProperty ("transpose", 99), 0);
+        CHECK_EQ ((int) status.getProperty ("defaultTranspose", 99), 0);
+        CHECK (status.getProperty ("scoreText", {}).toString() != up);
+
+        // too much is brought back to 48
+        service.setTranscriptionSetting ("transpose", 100);
+        CHECK_EQ ((int) service.getStatus().getProperty ("settings", {}).getProperty ("transpose", 99), 48);
+
+        // saved with the take and the default, and back
+        service.setTranscriptionSetting ("transpose", -3);
+        juce::MemoryBlock saved;
+        service.saveState (saved);
+        CaptureService again;
+        again.loadState (saved.getData(), saved.getSize());
+        CHECK_EQ ((int) again.getStatus().getProperty ("settings", {}).getProperty ("transpose", 99), -3);
+        CHECK_EQ ((int) again.getStatus().getProperty ("defaultTranspose", 99), -3);
+
+        // the next recording gets the default
+        record (again, 4, 1);
+        CHECK (waitForVersions (again, 2));
+        CHECK_EQ ((int) again.getStatus().getProperty ("settings", {}).getProperty ("transpose", 99), -3);
+
+        // an edited take is not written again: it keeps its transposition, the default still follows
+        const auto ids = noteIdsOf (again.getMei().getProperty ("mei", {}).toString());
+        CHECK (ids.size() >= 1);
+        CHECK ((bool) again.editScore (editRequest ("pitch", ids[0], 1)).getProperty ("ok", false));
+        again.setTranscriptionSetting ("transpose", 5);
+        CHECK_EQ ((int) again.getStatus().getProperty ("settings", {}).getProperty ("transpose", 99), -3);
+        CHECK_EQ ((int) again.getStatus().getProperty ("defaultTranspose", 99), 5);
+    }
+
     struct Test { const char* name; void (*fn)(); };
 
 
@@ -766,6 +815,7 @@ namespace
         { "service: title and composer", testTitleAndComposer },
         { "service: editing the score", testEditing },
         { "service: selecting several notes", testSelecting },
+        { "service: transposition", testTransposing },
     };
 }
 

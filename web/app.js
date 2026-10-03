@@ -258,6 +258,11 @@ $("set-instrument").addEventListener("change", function (e) { send("setInstrumen
 $("set-grid").addEventListener("change", function (e) { setSetting("grid", parseInt(e.target.value, 10)); });
 $("set-triplets").addEventListener("change", function (e) { setSetting("triplets", e.target.checked); });
 $("set-pickup").addEventListener("change", function (e) { setSetting("autoPickup", e.target.checked); });
+$("set-transpose").addEventListener("change", function (e) {
+  const v = parseInt(e.target.value, 10);
+  if (v >= -48 && v <= 48) setSetting("transpose", v);
+  else e.target.value = String(capStatus && capStatus.settings ? capStatus.settings.transpose : (capStatus ? capStatus.defaultTranspose : 0) || 0);
+});
 $("set-split").addEventListener("change", function (e) {
   const v = parseInt(e.target.value, 10);
   if (v >= 21 && v <= 108) setSetting("splitPoint", v);
@@ -278,6 +283,11 @@ function showTranscription(s) {
   if (document.activeElement !== $("set-instrument")) $("set-instrument").value = instrument;
   $("grp-split").hidden = instrument !== "piano";
   $("grp-key").hidden = instrument === "drums";
+
+  // the transposition is for pitched instruments; it can be chosen before the first recording (the next one gets it)
+  $("grp-transpose").hidden = instrument === "drums";
+  $("set-transpose").disabled = s.state === "recording" || s.state === "armed" || locked;
+  if (document.activeElement !== $("set-transpose")) $("set-transpose").value = String(has ? s.settings.transpose : (s.defaultTranspose || 0));
 
   if (!has) {
     $("score-info").textContent = s.state === "recording" ? "The score is made when the recording stops." : "No score yet. New recordings are written for: " + instrument + ".";

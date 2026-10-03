@@ -20,7 +20,7 @@ TranscriptionResult transcribeDrums (const ResolvedCapture& capture, const Trans
     TranscriptionResult result;
     auto& report = result.report;
 
-    auto prepared = prepareNotes (capture, settings, result);
+    auto prepared = prepareNotes (capture, settings, result, false);   // drums are not transposed: the drum map works on note numbers
     auto& quantized = prepared.quantized;
     auto& bars = prepared.bars;
     const auto& notes = quantized.notes;

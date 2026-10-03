@@ -22,6 +22,7 @@ struct TranscriptionSettings
 {
     int grid = 16;              // finest division kept: 4, 8, 16, 32, 64 or 128 (quarter ... 128th notes)
     bool triplets = true;       // a beat may use the triplet grid when it fits better
+    int transpose = 0;          // semitones added to every pitch before the score is made (a synth that transposes); not for drums
     int splitPoint = 60;        // piano: notes from here up go to the right hand
     bool autoPickup = true;     // a first bar that starts late becomes a pickup bar
     int keyTonic = -1;          // -1 = detect the key; otherwise the tonic as a pitch class 0-11 ...

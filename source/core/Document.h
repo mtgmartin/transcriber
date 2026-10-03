@@ -120,6 +120,7 @@ public:
     Json uiPrefs = Json::object();
     Json drumMaps = Json::array();   // the drum maps the user made (the built-in ones are in code)
     Json defaultProfile = Json::object();   // the instrument a new recording gets
+    int defaultTranspose = 0;               // the transposition (semitones) a new recording gets
 
     // Changes whenever a version is added, removed, renamed, selected or edited.
     uint64_t revision() const;
